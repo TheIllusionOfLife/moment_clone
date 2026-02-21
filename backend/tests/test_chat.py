@@ -163,8 +163,7 @@ def test_send_message_cooking_videos_room_no_ai_reply(
         app.dependency_overrides.clear()
 
 
-@pytest.mark.asyncio
-async def test_generate_coaching_reply_with_session_context(
+def test_generate_coaching_reply_with_session_context(
     engine, db, user, dish, chatroom, completed_session, mocker
 ):
     """_generate_coaching_reply persists an AI message when session context exists."""
@@ -175,7 +174,7 @@ async def test_generate_coaching_reply_with_session_context(
     mocker.patch("backend.routers.chat.genai.Client", return_value=mock_client)
     mocker.patch("backend.routers.chat.get_engine", return_value=engine)
 
-    await _generate_coaching_reply(
+    _generate_coaching_reply(
         session_id=completed_session.id,
         user_id=user.id,
         room_id=chatroom.id,
@@ -192,14 +191,13 @@ async def test_generate_coaching_reply_with_session_context(
     assert "火力を上げてみましょう" in ai_messages[0].text
 
 
-@pytest.mark.asyncio
-async def test_generate_coaching_reply_fallback_no_session(engine, db, user, chatroom, mocker):
+def test_generate_coaching_reply_fallback_no_session(engine, db, user, chatroom, mocker):
     """_generate_coaching_reply uses a fallback message when no completed session."""
     from backend.routers.chat import _generate_coaching_reply
 
     mocker.patch("backend.routers.chat.get_engine", return_value=engine)
 
-    await _generate_coaching_reply(
+    _generate_coaching_reply(
         session_id=None,
         user_id=user.id,
         room_id=chatroom.id,

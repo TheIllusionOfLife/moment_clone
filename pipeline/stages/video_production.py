@@ -103,7 +103,8 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
         _synthesize_tts(tts_client, narration_script["part1"], part1_audio_path)
         _synthesize_tts(tts_client, narration_script["part2"], part2_audio_path)
 
-        # Step 3: Extract 15-second clip at key_moment_seconds.
+        # Step 3: Extract 30-second clip at key_moment_seconds, normalised to 1280x720.
+        # Scale + pad ensures the final concat demuxer receives identical stream params.
         key_moment = (session.video_analysis or {}).get("key_moment_seconds", 0)
         _run_ffmpeg(
             [
@@ -112,7 +113,10 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
                 "-i",
                 raw_video_path,
                 "-t",
-                "15",
+                "30",
+                "-vf",
+                "scale=1280:720:force_original_aspect_ratio=decrease,"
+                "pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
                 "-c:v",
                 "libx264",
                 "-c:a",
@@ -145,6 +149,8 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
         )
 
         # Step 5: Compose key-moment segment (clip + part2 audio).
+        # Explicit -map prevents FFmpeg selecting the original video audio over narration.
+        # -t limits to narration length; -shortest is removed to avoid cutting narration.
         part2_duration = _get_audio_duration(part2_audio_path)
         _run_ffmpeg(
             [
@@ -152,13 +158,16 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
                 key_moment_clip_path,
                 "-i",
                 part2_audio_path,
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
                 "-c:v",
                 "libx264",
                 "-c:a",
                 "aac",
                 "-t",
                 str(part2_duration),
-                "-shortest",
                 key_moment_segment_path,
             ]
         )

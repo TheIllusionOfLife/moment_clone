@@ -20,10 +20,14 @@ from backend.models.session import CookingSession
 
 
 def _parse_json_response(text: str) -> dict:
-    """Strip Gemini markdown code fences and parse JSON."""
-    cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.MULTILINE)
-    cleaned = re.sub(r"\s*```\s*$", "", cleaned.strip(), flags=re.MULTILINE)
-    return json.loads(cleaned.strip())
+    """Extract and parse the first JSON object from a Gemini response.
+
+    Handles markdown code fences and filler text before/after the JSON block.
+    """
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise ValueError(f"No JSON object found in response: {text[:200]}")
+    return json.loads(match.group())
 
 
 def get_session_with_dish(session_id: int) -> tuple[CookingSession, Dish]:
