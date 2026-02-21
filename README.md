@@ -144,7 +144,7 @@ moment-clone/
 │   ├── worker.py               # Entrypoint — receives Pub/Sub message
 │   └── stages/
 │       ├── voice_memo.py       # Stage 0: STT + entity extraction
-│       ├── video_analysis.py   # Stage 1: Gemini CoVT
+│       ├── video_analysis.py   # Stage 1: Gemini (single-agent)
 │       ├── rag.py              # Stage 2: Vertex AI Vector Search
 │       ├── coaching_script.py  # Stage 3: coaching text + narration script
 │       └── video_production.py # Stage 4: Cloud TTS + FFmpeg
@@ -198,7 +198,7 @@ User uploads video
     → Pub/Sub message published
     → Cloud Run Job triggered
     → Stage 0: Voice memo STT + entity extraction (optional)
-    → Stage 1: Video analysis (Gemini CoVT — single-agent)
+    → Stage 1: Video analysis (Gemini (single-agent) — single-agent)
     → Stage 2: RAG retrieval (Vertex AI Vector Search)
     → Stage 3a: Coaching text generation → delivered to chat (~2–3 min)
     → Stage 3b: Narration script generation

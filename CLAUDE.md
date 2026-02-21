@@ -55,7 +55,7 @@ Next.js PWA (Vercel) → FastAPI (Cloud Run) via REST + JWT → Cloud SQL (Postg
 Video upload → GCS → Pub/Sub message → Cloud Run Job triggers 5-stage pipeline:
 
 0. **Stage 0 — Voice Memo** (`pipeline/stages/voice_memo.py`): Optional pre-stage. Google Cloud STT → `voice_transcript`; Gemini entity extraction → `structured_input`. Skipped if no voice memo.
-1. **Stage 1 — Video Analysis** (`pipeline/stages/video_analysis.py`): Single-agent Chain-of-Video-Thought (CoVT) with Gemini 3 Flash (`gemini-3-flash`). One prompt extracts cooking events, environment state, diagnosis, and `key_moment_timestamp`. Idempotency guard: check `session.pipeline_job_id` before processing.
+1. **Stage 1 — Video Analysis** (`pipeline/stages/video_analysis.py`): Single-agent structured prompting with Gemini 3 Flash (`gemini-3-flash`). One prompt extracts cooking events, environment state, diagnosis, and `key_moment_timestamp`. Idempotency guard: check `session.pipeline_job_id` before processing.
 2. **Stage 2 — RAG** (`pipeline/stages/rag.py`): Vertex AI Vector Search over cooking principles knowledge base + past session summaries from `LearnerState`.
 3. **Stage 3a — Coaching Text** (`pipeline/stages/coaching_script.py`): Gemini generates `coaching_text` (4-section JSON). Delivered to Coaching chat room immediately (~2–3 min). Session status → `text_ready`.
 4. **Stage 3b — Narration Script**: Gemini generates `narration_script` (part1 / pivot / part2).
@@ -74,7 +74,7 @@ Next.js App Router PWA deployed on Vercel. Routes mirror `/app` directory struct
 
 ### Key design decisions baked in
 - **Japanese only** (`ja-JP`): All AI prompts, TTS voice (`ja-JP-Neural2-B`), coaching text in Japanese.
-- **Gemini 3 Flash (`gemini-3-flash`)** for all AI (video CoVT + coaching text + narration + Q&A). Use `GEMINI_MODEL=gemini-3-flash`.
+- **Gemini 3 Flash (`gemini-3-flash`)** for all AI (video analysis +coaching text + narration + Q&A). Use `GEMINI_MODEL=gemini-3-flash`.
 - **`Session` model constraints**: `unique_together=(user_id, dish_id, session_number)` + `CheckConstraint session_number IN (1,2,3)`. `raw_video_url` blank until upload. `pipeline_job_id` is idempotency key.
 - **GCS path pattern**: Store `coaching_video_gcs_path` (immutable object path). Generate signed URL at read time in API response. Same for `Message.video_gcs_path`.
 - **Tiered delivery**: `status` flow is `uploaded → processing → text_ready → completed`. Text message posted after Stage 3a; video message posted after Stage 4.

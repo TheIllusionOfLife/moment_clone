@@ -72,8 +72,8 @@
 │  │    - Google STT → voice_transcript          │   │
 │  │    - Gemini entity extraction → structured  │   │
 │  ├─────────────────────────────────────────────┤   │
-│  │ 1. Video Analysis (Gemini CoVT)             │   │
-│  │    - Single-agent Chain-of-Video-Thought    │   │
+│  │ 1. Video Analysis (Gemini)                  │   │
+│  │    - Single-agent structured prompting      │   │
 │  │    - cooking_events + key_moment + diagnosis│   │
 │  ├─────────────────────────────────────────────┤   │
 │  │ 2. RAG Agent (Vertex AI Vector Search)      │   │
@@ -177,8 +177,8 @@ at any time and the AI responds in context of their session.
 | Media storage | S3 | Cloud Storage |
 | Async event bus | SQS / SNS | Pub/Sub |
 | Pipeline workers | Lambda / ECS | Cloud Run Jobs |
-| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash`) CoVT — single agent |
-| Key moment detection | Custom CV with timestamp output | Extracted as part of CoVT prompt output |
+| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash`) single-agent structured prompting |
+| Key moment detection | Custom CV with timestamp output | Extracted as part of structured prompt output |
 | Knowledge base | Pinecone (4yr proprietary chef data) | Vertex AI Vector Search + curated knowledge base |
 | Coaching LLM | Post-trained on chef coaching dataset | Gemini 3 Flash (`gemini-3-flash`) + RAG + learner state |
 | Learner state | PostgreSQL + custom | PostgreSQL (LearnerState SQLModel) |
@@ -195,8 +195,8 @@ at any time and the AI responds in context of their session.
 
 | Agent | Moment | Our Clone |
 |---|---|---|
-| Video Analysis | Custom-trained CV + foundation model | Gemini 3 Flash (`gemini-3-flash`): single-agent CoVT (events + timestamps + diagnosis in one call) |
-| Key Moment Detection | Custom CV classifier | Gemini 3 Flash (`gemini-3-flash`): extracted as part of CoVT prompt output |
+| Video Analysis | Custom-trained CV + foundation model | Gemini 3 Flash (`gemini-3-flash`): single-agent structured prompt (events + timestamps + diagnosis in one call) |
+| Key Moment Detection | Custom CV classifier | Gemini 3 Flash (`gemini-3-flash`): extracted as part of structured prompt output |
 | RAG | Pinecone + proprietary chef dataset | Vertex AI Vector Search + curated knowledge base |
 | Coaching Script | Post-trained LLM, 2-part script structure | Gemini 3 Flash (`gemini-3-flash`): Part1 (principle/diagnosis) + Part2 (clip narration) |
 | Dialogue Manager | Custom intent/entity + fallback/escalation | Gemini 3 Flash (`gemini-3-flash`) with session context + conversation history |

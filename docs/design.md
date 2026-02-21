@@ -29,7 +29,7 @@ Pub/Sub
     ↓ trigger
 AI Pipeline (Cloud Run Job)
     ├── Stage 0: Voice Memo STT + extraction (optional)
-    ├── Stage 1: Video Analysis (Gemini 3 Flash CoVT)
+    ├── Stage 1: Video Analysis (Gemini 3 Flash (structured video analysis))
     ├── Stage 2: RAG Agent               (Vertex AI Vector Search)
     ├── Stage 3a: Coaching Text          → delivered to chat (~2–3 min)
     ├── Stage 3b: Narration Script       (Gemini 3 Flash)
@@ -284,7 +284,7 @@ Step 2 — Entity extraction
 
 **Input**: raw_video_url, dish.slug, session.session_number
 **Model**: Gemini 3 Flash (`gemini-3-flash`) (video input)
-**Pattern**: Single-agent Chain-of-Video-Thought (CoVT)
+**Pattern**: Single-agent structured video analysis
 
 Gemini 3's context window handles full cooking video analysis in one call.
 The dual-agent pattern (CHEF-VL) is unnecessary overhead.
@@ -571,7 +571,7 @@ Browser (speaker)
 | File storage | Google Cloud Storage |
 | Async events | Pub/Sub |
 | AI pipeline runner | Cloud Run Jobs |
-| Video analysis | Gemini 3 Flash (`gemini-3-flash`, CoVT pattern) |
+| Video analysis | Gemini 3 Flash (`gemini-3-flash`, single-agent structured prompting) |
 | Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) |
 | Vector search | Vertex AI Vector Search |
 | TTS | Google Cloud TTS (Neural2 ja-JP) |
@@ -601,7 +601,7 @@ Browser (speaker)
 ### Phase 2 — AI Pipeline
 6. Cloud Run Job scaffold (pipeline entrypoint + idempotency guard)
 7. Stage 0: Voice memo STT + entity extraction (optional pre-stage)
-8. Stage 1: Video Analysis Agent (Gemini CoVT)
+8. Stage 1: Video Analysis Agent (Gemini, structured single-agent)
 9. Stage 2: RAG Agent (Vertex AI Vector Search + knowledge base ingest)
 10. Stage 3a: Coaching text → deliver to chat immediately (`text_ready`)
 11. Stage 3b: Narration script generation
