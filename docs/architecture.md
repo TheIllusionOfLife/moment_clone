@@ -177,7 +177,7 @@ at any time and the AI responds in context of their session.
 | Auth | Django sessions | Clerk (Next.js SDK + JWKS verification in FastAPI) |
 | Primary DB | PostgreSQL | Supabase (PostgreSQL + pgvector) |
 | Vector search | Pinecone (proprietary chef data) | Supabase pgvector — same DB, no separate service |
-| Embeddings | Proprietary | Gemini Embeddings API (`text-embedding-004`) |
+| Embeddings | Proprietary | Gemini Embeddings API (`gemini-embedding-001`) |
 | Media storage | S3 | Cloud Storage |
 | Async event bus | SQS / SNS | Pub/Sub |
 | Pipeline workers | Lambda / ECS | Cloud Run Jobs |

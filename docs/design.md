@@ -49,8 +49,8 @@ Supabase (PostgreSQL + pgvector)
 ```python
 class User(SQLModel, table=True):
     id:                   Optional[int] = Field(default=None, primary_key=True)
+    clerk_user_id:        str = Field(unique=True, index=True)  # from Clerk user.created webhook
     email:                str = Field(unique=True, index=True)
-    hashed_password:      str
     first_name:           str = Field(max_length=100)
     onboarding_done:      bool = Field(default=False)
     subscription_status:  str = Field(default="free")
@@ -120,8 +120,8 @@ class Session(SQLModel, table=True):
     # { "identified_issues": [...], "questions": [...], "emotional_state": "..." }
 
     # Pipeline state
-    status:              str = Field(default="uploaded")
-    # "uploaded" | "processing" | "text_ready" | "completed" | "failed"
+    status:              str = Field(default="pending_upload")
+    # "pending_upload" | "uploaded" | "processing" | "text_ready" | "completed" | "failed"
     pipeline_job_id:     Optional[UUID] = Field(default=None)  # idempotency key
     pipeline_started_at: Optional[datetime] = None
     pipeline_error:      str = Field(default="")
@@ -212,7 +212,7 @@ class Message(SQLModel, table=True):
 
 ---
 
-## API Endpoints (Django REST Framework)
+## API Endpoints
 
 ### Auth
 Auth UI (sign-in, sign-up, user management) is handled entirely by Clerk's Next.js SDK.
@@ -220,12 +220,16 @@ FastAPI never issues or stores passwords — it only verifies Clerk JWTs via JWK
 
 ```
 POST   /api/webhooks/clerk/     → Clerk calls this on user.created / user.updated
-                                  FastAPI creates/updates User row in Supabase
+                                  On user.created: creates User row + ChatRoom rows (coaching + cooking_videos)
+                                  Webhook signature verified via svix-signature header (CLERK_WEBHOOK_SECRET)
+POST   /api/webhooks/stripe/    → Stripe subscription lifecycle events
+                                  (customer.subscription.created/updated/deleted → User.subscription_status)
 GET    /api/auth/me/            → returns current user from Supabase (JWT required)
 ```
 
 All other endpoints require `Authorization: Bearer <clerk_session_token>`.
 FastAPI middleware fetches Clerk JWKS and verifies the token on each request.
+All session and chat endpoints filter by `user_id = current_user.id` to prevent IDOR.
 
 ### Onboarding
 ```
@@ -240,8 +244,9 @@ GET    /api/dishes/{slug}/       → dish detail + user progress
 
 ### Sessions
 ```
+GET    /api/sessions/?dish_slug={slug}   → list sessions for a dish (current user only)
 POST   /api/sessions/                    → create session, get upload URL
-POST   /api/sessions/{id}/upload/        → upload raw video → GCS → trigger pipeline
+POST   /api/sessions/{id}/upload/        → upload raw video → GCS → set status="uploaded" → trigger pipeline
 POST   /api/sessions/{id}/voice-memo/    → upload voice memo → GCS
 PATCH  /api/sessions/{id}/ratings/       → save self-assessment ratings
 GET    /api/sessions/{id}/               → session detail + coaching output
@@ -311,14 +316,39 @@ Prompt: "Watch this cooking video of {dish_name}. Think step by step:
 
 **Idempotency guard** (pipeline entrypoint):
 ```python
-if session.pipeline_job_id is not None:
-    return  # already processed — at-least-once Pub/Sub delivery guard
+if session.pipeline_job_id and session.status not in ("failed", "uploaded"):
+    return  # already processing or completed — at-least-once Pub/Sub delivery guard
+            # "failed" sessions are retryable; "uploaded" is the expected entry state
 session.pipeline_job_id = uuid4()
 session.status = "processing"
 session.save()
 ```
 
+**Pub/Sub retry policy**: Pub/Sub redelivers on non-ack up to 7 days. Dead-letter topic (`pipeline-worker-dlq`) configured for messages that exceed 5 delivery attempts. Failed sessions (`status="failed"`) can be manually re-triggered or retried via a future admin endpoint.
+
 **Output**: `session.video_analysis` (JSON)
+
+---
+
+### Knowledge Base Schema (`cooking_principles` table)
+
+```sql
+-- Alembic migration: enable pgvector then create table
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE cooking_principles (
+    id            SERIAL PRIMARY KEY,
+    principle_text TEXT NOT NULL,
+    category      VARCHAR(100),          -- e.g. "heat_management", "moisture_control"
+    embedding     vector(768) NOT NULL,  -- gemini-embedding-001 output dimension
+    created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+-- HNSW index for approximate nearest-neighbour search (faster than IVFFlat at this scale)
+CREATE INDEX ON cooking_principles USING hnsw (embedding vector_cosine_ops);
+```
+
+Populated by `knowledge_base/ingest.py`: reads Markdown files → embeds with `gemini-embedding-001` → inserts rows.
 
 ---
 
@@ -331,9 +361,9 @@ session.save()
 
 ```
 Step 1 — Embed query
-  Gemini Embeddings API (text-embedding-004):
+  Gemini Embeddings API (gemini-embedding-001):
   query_text = diagnosis + " " + dish.principles.join(", ")
-  query_vector = embed(query_text)
+  query_vector = embed(query_text)  # → 768-dimensional vector
 
 Step 2 — pgvector similarity search
   SELECT * FROM cooking_principles
@@ -377,6 +407,10 @@ After Stage 3a completes:
   - Persist `session.coaching_text`
   - Set `session.status = "text_ready"`
   - Create Message in Coaching room (formatted text, sender="ai")
+  - Update LearnerState:
+      - Append to `session_summaries`: { dish, session_number, key_issue (diagnosis), key_progress }
+      - Increment `recurring_mistakes` count if same mistake seen before
+      - Move skills from `skills_developing` → `skills_acquired` if session 3 completed cleanly
   - User can read coaching while video is still being produced
 
 **Output**: `session.coaching_text`, `session.status = "text_ready"`
@@ -420,8 +454,11 @@ Step 2 — Clip extraction
   → key_moment_clip.mp4
 
 Step 3 — Intro segment
-  FFmpeg: trim raw_video to duration of part1_audio
-  Mix: -filter_complex "[0:v][1:a]" (video stream + part1 audio, replace original audio)
+  Note: MVP expects users to upload a timelapse of their cooking session
+  (phone timelapse mode, or any sped-up cooking video). The intro plays
+  this timelapse as background while TTS1 narrates.
+  FFmpeg: loop/trim timelapse to match part1_audio duration
+  Mix: -filter_complex "[0:v][1:a]" (timelapse stream + part1 audio, mute original)
   → intro_segment.mp4
 
 Step 4 — Key moment segment
@@ -454,12 +491,12 @@ After pipeline completes, the system creates two messages automatically:
 ```python
 Message(
     sender="system",
-    video_url=raw_video_url,
+    video_gcs_path=session.raw_video_url,  # signed URL generated at read time
     metadata={"type": "cooking_video", "session_id": session.id}
 )
 ```
 
-**In "Coaching" room:**
+**In "Coaching" room (Stage 3a — delivered at text_ready):**
 ```python
 Message(
     sender="ai",
@@ -475,9 +512,13 @@ Message(
     # {success_sign}
     metadata={"type": "coaching_ready", "session_id": session.id}
 )
+```
+
+**In "Coaching" room (Stage 4 — delivered at completed):**
+```python
 Message(
     sender="ai",
-    video_url=session.coaching_video_url,
+    video_gcs_path=session.coaching_video_gcs_path,  # signed URL generated at read time
     metadata={"type": "coaching_video", "session_id": session.id}
 )
 ```
@@ -494,7 +535,7 @@ POST /api/chat/rooms/coaching/messages/
 
 → Message(sender="user", ...) persisted
 
-→ Background task (Pub/Sub or Django Q):
+→ Background task (Pub/Sub or FastAPI BackgroundTasks):
     1. Load context:
        - Last N messages in coaching room (conversation history)
        - session = most recent completed session for this user
@@ -573,6 +614,7 @@ Browser (speaker)
 - Requires stable connection; degraded gracefully if connection drops
 - Kitchen noise / steam handled by Gemini Live's multimodal robustness
 - Privacy note: live video is streamed but not stored
+- **Production path**: raw WebSocket is sufficient for prototype; for production stability use WebRTC + LiveKit (Google's recommended wrapper for Gemini Live as of 2026)
 
 ---
 
@@ -586,13 +628,13 @@ Browser (speaker)
 | Backend API | Python / FastAPI |
 | ORM + Migrations | SQLModel + Alembic |
 | Database + Vector search | Supabase (PostgreSQL 16 + pgvector) |
-| Embeddings | Gemini Embeddings API (`text-embedding-004`) |
+| Embeddings | Gemini Embeddings API (`gemini-embedding-001`, 768-dim) |
 | File storage | Google Cloud Storage |
 | Async events | Pub/Sub |
 | AI pipeline runner | Cloud Run Jobs |
 | Video analysis | Gemini 3 Flash (`gemini-3-flash`, single-agent structured prompting) |
 | Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) |
-| TTS | Google Cloud TTS (Neural2 ja-JP) |
+| TTS | Google Cloud TTS (Chirp 3 HD ja-JP) |
 | Video composition | FFmpeg (in Cloud Run Job container) |
 | Auth | Clerk (Next.js SDK + FastAPI JWT verification via JWKS) |
 | Payments | Stripe (subscriptions) |
@@ -635,7 +677,7 @@ Browser (speaker)
 
 ### Phase 1 — Backend Foundation
 1. FastAPI project scaffold (uv, ruff, SQLModel, Alembic)
-2. User auth (JWT: register, login, `/me`)
+2. Clerk webhook handler (`POST /webhooks/clerk/`): create User + ChatRooms on `user.created`; `GET /auth/me/`
 3. Dish + Session + LearnerState models + Alembic migrations
 4. Video upload endpoint → GCS
 5. Pub/Sub publisher on upload

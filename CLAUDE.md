@@ -55,7 +55,7 @@ Video upload → GCS → Pub/Sub → Cloud Run Job:
 
 0. **Stage 0 — Voice Memo** (`pipeline/stages/voice_memo.py`): Optional. Google STT → `voice_transcript`; Gemini entity extraction → `structured_input`.
 1. **Stage 1 — Video Analysis** (`pipeline/stages/video_analysis.py`): Gemini 3 Flash, single-agent structured prompt. Extracts cooking events, environment state, diagnosis, `key_moment_timestamp` in one call. Idempotency guard: check `session.pipeline_job_id` before processing.
-2. **Stage 2 — RAG** (`pipeline/stages/rag.py`): Embed query with Gemini `text-embedding-004` → pgvector similarity search in Supabase → top-3 cooking principles + past session summaries.
+2. **Stage 2 — RAG** (`pipeline/stages/rag.py`): Embed query with Gemini `gemini-embedding-001` → pgvector similarity search in Supabase → top-3 cooking principles + past session summaries.
 3. **Stage 3a — Coaching Text** (`pipeline/stages/coaching_script.py`): Gemini generates `coaching_text` (4-section JSON). Posted to Coaching chat immediately. Session status → `text_ready`. (~2–3 min after upload)
 4. **Stage 3b — Narration Script**: Gemini generates `narration_script` (part1 / pivot / part2).
 5. **Stage 4 — Video Production** (`pipeline/stages/video_production.py`): Cloud TTS → audio files. FFmpeg: extract 15s clip at `key_moment_seconds`, compose final video → GCS. Video posted to chat. Session status → `completed`. (~5–10 min after upload)
@@ -71,7 +71,7 @@ Video upload → GCS → Pub/Sub → Cloud Run Job:
 Next.js App Router PWA on Vercel. `@clerk/nextjs` for auth. Tanstack Query for all server state. shadcn/ui + Tailwind for components.
 
 ### Knowledge base (`knowledge_base/`)
-Markdown principles → embedded via Gemini `text-embedding-004` → stored in Supabase pgvector table. Run `knowledge_base/ingest.py` to rebuild.
+Markdown principles → embedded via Gemini `gemini-embedding-001` (768-dim) → stored in Supabase pgvector table. Run `knowledge_base/ingest.py` to rebuild.
 
 ## Key design decisions
 
@@ -81,15 +81,16 @@ Markdown principles → embedded via Gemini `text-embedding-004` → stored in S
 | Auth | Clerk | Eliminates auth implementation from scope; JWKS-based JWT verification works cleanly with FastAPI |
 | Frontend components | shadcn/ui + Tailwind | Copy-paste ownership model, no version lock-in, Radix UI accessibility |
 | Data fetching | Tanstack Query | `refetchInterval` pattern for polling `text_ready → completed` pipeline status |
-| Embeddings | Gemini `text-embedding-004` | Same API key as LLM; no additional vendor |
+| Embeddings | Gemini `gemini-embedding-001` | Same API key as LLM; no additional vendor |
 | Video analysis | Single-agent structured prompt | Gemini 3 handles full video analysis in one call; dual-agent overhead unnecessary |
 | Feedback delivery | Tiered (text first) | Users read diagnosis in ~2–3 min while video encodes; vs Moment's 2-day wait |
 | Coaching video storage | GCS path (not URL) | Signed URL generated at read time; no stale URLs in chat history |
 
 ## Baked-in constraints
-- **Japanese only** (`ja-JP`): all prompts, TTS (`ja-JP-Neural2-B`), coaching text
-- **`gemini-3-flash`** for all AI tasks. `text-embedding-004` for embeddings. Both via `GEMINI_API_KEY`.
+- **Japanese only** (`ja-JP`): all prompts, TTS (Chirp 3 HD `ja-JP-Chirp3-HD-*`), coaching text
+- **`gemini-3-flash`** for all AI tasks. `gemini-embedding-001` (768-dim) for embeddings. Both via `GEMINI_API_KEY`.
 - **Session limits**: `unique_together=(user_id, dish_id, session_number)` + `CHECK session_number IN (1,2,3)`
 - **Pivot line is fixed**: `"動画を使ってそのポイントを見てみましょう"` always the exact string in `narration_script.pivot`
-- **Status flow**: `uploaded → processing → text_ready → completed` (or `failed`)
+- **Status flow**: `pending_upload → uploaded → processing → text_ready → completed` (or `failed`)
+- **Clerk webhook** creates User + ChatRooms on `user.created`; no passwords stored; `clerk_user_id` is the User↔Clerk link
 - **No Django anywhere**: FastAPI + SQLModel + Alembic throughout

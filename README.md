@@ -12,7 +12,7 @@ A clone of [Cookpad's moment](https://cookwithmoment.com) — an AI-powered pers
 | Backend API | Python / FastAPI | Async-native; natural fit for Python AI libraries |
 | ORM + Migrations | SQLModel + Alembic | Pydantic-native ORM; pairs naturally with FastAPI |
 | Database + Vector search | Supabase (PostgreSQL 16 + pgvector) | Replaces Cloud SQL + Vertex AI Vector Search; cheaper, simpler ops, one connection |
-| Embeddings | Gemini Embeddings API (`text-embedding-004`) | Same API key as coaching LLM; no extra vendor |
+| Embeddings | Gemini Embeddings API (`gemini-embedding-001`) | Same API key as coaching LLM; no extra vendor |
 | Auth | Clerk | Auth UI + session management out of the box; FastAPI verifies JWTs via JWKS |
 | File storage | Google Cloud Storage | Large video files; signed URLs for secure delivery |
 | Async queue | Google Cloud Pub/Sub | Decouples upload from pipeline execution |
@@ -100,10 +100,10 @@ PUBSUB_SUBSCRIPTION=pipeline-worker
 # Gemini
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3-flash
-GEMINI_EMBEDDING_MODEL=text-embedding-004
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 
-# Google Cloud TTS
-TTS_VOICE=ja-JP-Neural2-B
+# Google Cloud TTS (Chirp 3 HD — configure specific voice name after evaluation)
+TTS_VOICE=ja-JP-Chirp3-HD-Aoede
 TTS_LANGUAGE=ja-JP
 
 # Stripe
