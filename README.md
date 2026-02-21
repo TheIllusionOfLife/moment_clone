@@ -184,10 +184,12 @@ moment-clone/
 │
 ├── pipeline/                   # AI pipeline (Inngest durable functions)
 │   ├── functions.py            # Inngest function + step.run() stages
-│   └── stages/                 # Phase 2: voice_memo, video_analysis, rag, coaching, video
+│   ├── stages/                 # voice_memo, video_analysis, rag, coaching_script, narration_script, video_production
+│   └── tests/                  # pytest suite (unit, all external calls mocked)
 │
 ├── knowledge_base/             # Cooking principles for RAG
-│   ├── principles/             # Markdown files per principle
+│   ├── heat_management.md      # Markdown files embedded into pgvector via seed_knowledge_base
+│   ├── moisture_control.md
 │   └── ingest.py               # Embed with Gemini → insert into Supabase pgvector
 │
 ├── alembic/                    # Database migrations
