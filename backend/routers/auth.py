@@ -1,7 +1,9 @@
 import json
+import logging
 
 from cachetools import TTLCache
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from svix.webhooks import Webhook, WebhookVerificationError
 
@@ -11,6 +13,8 @@ from backend.core.settings import settings
 from backend.models.chat import ChatRoom
 from backend.models.learner_state import LearnerState
 from backend.models.user import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -68,25 +72,45 @@ async def clerk_webhook(
         primary_email_id: str = data.get("primary_email_address_id", "")
 
         email = next(
-            (e["email_address"] for e in email_addresses if e["id"] == primary_email_id),
-            email_addresses[0]["email_address"] if email_addresses else "",
+            (
+                e.get("email_address", "")
+                for e in email_addresses
+                if e.get("id") == primary_email_id
+            ),
+            email_addresses[0].get("email_address", "") if email_addresses else "",
         )
         first_name: str = data.get("first_name") or data.get("username") or "User"
 
+        if not clerk_user_id or not email:
+            logger.warning(
+                "user.created webhook missing clerk_user_id or email; skipping. "
+                "clerk_user_id=%r email=%r",
+                clerk_user_id,
+                email,
+            )
+            _processed_webhook_ids[svix_id] = True
+            return {"status": "ok"}
+
         existing = db.exec(select(User).where(User.clerk_user_id == clerk_user_id)).first()
         if existing is None:
-            user = User(
-                clerk_user_id=clerk_user_id,
-                email=email,
-                first_name=first_name,
-            )
-            db.add(user)
-            db.flush()  # populate user.id before FK references
+            try:
+                user = User(
+                    clerk_user_id=clerk_user_id,
+                    email=email,
+                    first_name=first_name,
+                )
+                db.add(user)
+                db.flush()  # populate user.id before FK references
 
-            db.add(LearnerState(user_id=user.id))
-            db.add(ChatRoom(user_id=user.id, room_type="coaching"))
-            db.add(ChatRoom(user_id=user.id, room_type="cooking_videos"))
-            db.commit()
+                db.add(LearnerState(user_id=user.id))
+                db.add(ChatRoom(user_id=user.id, room_type="coaching"))
+                db.add(ChatRoom(user_id=user.id, room_type="cooking_videos"))
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                logger.info(
+                    "user.created race: user already exists for clerk_user_id=%r", clerk_user_id
+                )
 
     _processed_webhook_ids[svix_id] = True
     return {"status": "ok"}

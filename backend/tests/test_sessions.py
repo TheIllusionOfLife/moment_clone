@@ -8,7 +8,6 @@ from sqlmodel import Session
 
 from backend.core.auth import get_current_user
 from backend.core.database import get_session
-from backend.routers.sessions import MAX_VIDEO_BYTES
 
 
 @pytest.fixture()
@@ -63,8 +62,10 @@ def test_upload_video_valid_mime_accepted(client, cooking_session):
     with (
         patch("backend.routers.sessions.upload_file", new_callable=AsyncMock) as mock_upload,
         patch("backend.routers.sessions.send_video_uploaded", new_callable=AsyncMock),
+        patch("backend.routers.sessions.generate_signed_url", new_callable=AsyncMock) as mock_sign,
     ):
         mock_upload.return_value = "sessions/1/raw_video_abc.mp4"
+        mock_sign.return_value = "https://storage.example.com/signed"
         resp = client.post(
             f"/api/sessions/{cooking_session.id}/upload/",
             files={"video": ("clip.mp4", small_mp4, "video/mp4")},
@@ -86,9 +87,12 @@ def test_upload_audio_invalid_mime_rejected(client, cooking_session):
 # ---------------------------------------------------------------------------
 
 
-def test_upload_video_exceeds_limit_rejected(client, cooking_session):
-    """Uploading more than MAX_VIDEO_BYTES returns 422."""
-    oversized = b"\x00" * (MAX_VIDEO_BYTES + 1)
+def test_upload_video_exceeds_limit_rejected(monkeypatch, client, cooking_session):
+    """Uploading more than MAX_VIDEO_BYTES returns 422 (MAX_VIDEO_BYTES patched to 10 bytes)."""
+    import backend.routers.sessions as sessions_module
+
+    monkeypatch.setattr(sessions_module, "MAX_VIDEO_BYTES", 10)
+    oversized = b"\x00" * 11
     resp = client.post(
         f"/api/sessions/{cooking_session.id}/upload/",
         files={"video": ("big.mp4", oversized, "video/mp4")},

@@ -17,14 +17,18 @@ _cache_lock = threading.Lock()
 _bearer = HTTPBearer()
 
 
-def _fetch_jwks() -> dict:
-    # Fast path: check cache before acquiring the lock
-    if "jwks" in _jwks_cache:
-        return _jwks_cache["jwks"]
+def _fetch_jwks(force_refresh: bool = False) -> dict:
+    # Fast path: atomic read via .get() avoids KeyError if TTL evicts between check and access
+    if not force_refresh:
+        cached = _jwks_cache.get("jwks")
+        if cached is not None:
+            return cached
     with _cache_lock:
         # Re-check inside lock to handle concurrent waiters
-        if "jwks" in _jwks_cache:
-            return _jwks_cache["jwks"]
+        if not force_refresh:
+            cached = _jwks_cache.get("jwks")
+            if cached is not None:
+                return cached
         resp = httpx.get(settings.CLERK_JWKS_URL, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -32,11 +36,14 @@ def _fetch_jwks() -> dict:
         return data
 
 
-def _public_key_for_kid(kid: str):
-    jwks = _fetch_jwks()
+def _public_key_for_kid(kid: str, force_refresh: bool = False):
+    jwks = _fetch_jwks(force_refresh=force_refresh)
     for key in jwks.get("keys", []):
         if key["kid"] == kid:
             return jwt.algorithms.RSAAlgorithm.from_jwk(key)
+    if not force_refresh:
+        # Retry once with a fresh JWKS in case keys were recently rotated
+        return _public_key_for_kid(kid, force_refresh=True)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Unknown signing key",

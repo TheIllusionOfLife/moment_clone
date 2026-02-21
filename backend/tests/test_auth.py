@@ -6,29 +6,15 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
 from backend.core.auth import get_current_user
+from backend.core.database import get_session
 
 
 @pytest.fixture()
 def private_key():
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-
-@pytest.fixture()
-def client_with_auth(app, engine, user):
-    """TestClient where JWKS is mocked to return a locally generated RSA key."""
-    from sqlmodel import Session
-
-    from backend.core.database import get_session
-
-    def override_get_session():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-    with TestClient(app) as c:
-        yield c
 
 
 def test_missing_auth_header(app):
@@ -70,10 +56,6 @@ def test_valid_token_returns_user(app, engine, user, private_key):
         return user
 
     app.dependency_overrides[get_current_user] = override_auth
-
-    from sqlmodel import Session
-
-    from backend.core.database import get_session
 
     def override_get_session():
         with Session(engine) as session:

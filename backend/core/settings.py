@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
 
     # Google Cloud
-    GOOGLE_CLOUD_PROJECT: str = "moment-clone"
-    GCS_BUCKET: str = "moment-clone-media"
+    GOOGLE_CLOUD_PROJECT: str = ""
+    GCS_BUCKET: str = ""
     GCS_SIGNED_URL_EXPIRY_DAYS: int = 7
 
     # Inngest

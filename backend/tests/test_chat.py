@@ -19,7 +19,7 @@ def chatroom(db, user):
 
 
 @pytest.fixture()
-def client(app, engine, user, chatroom):
+def client(app, engine, user, chatroom):  # noqa: ARG001
     def override_get_session():
         with Session(engine) as session:
             yield session

@@ -64,7 +64,7 @@ class RatingsRequest(BaseModel):
 
 
 @router.get("/")
-def list_sessions(
+async def list_sessions(
     dish_slug: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
@@ -76,11 +76,11 @@ def list_sessions(
             raise HTTPException(status_code=404, detail="Dish not found")
         stmt = stmt.where(CookingSession.dish_id == dish.id)
     sessions = db.exec(stmt.order_by(col(CookingSession.created_at).desc())).all()
-    return [_session_to_dict(s) for s in sessions]
+    return [await _session_to_dict(s) for s in sessions]
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-def create_session(
+async def create_session(
     body: CreateSessionRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
@@ -111,7 +111,7 @@ def create_session(
         db.rollback()
         raise HTTPException(status_code=409, detail="Session already exists") from err
     db.refresh(cooking_session)
-    return _session_to_dict(cooking_session)
+    return await _session_to_dict(cooking_session)
 
 
 @router.post("/{session_id}/upload/")
@@ -157,7 +157,7 @@ async def upload_video(
     assert owned_session.id is not None  # always set after db.refresh()
     await send_video_uploaded(owned_session.id)
 
-    return _session_to_dict(owned_session)
+    return await _session_to_dict(owned_session)
 
 
 @router.post("/{session_id}/voice-memo/")
@@ -195,11 +195,11 @@ async def upload_voice_memo(
     db.add(owned_session)
     db.commit()
     db.refresh(owned_session)
-    return _session_to_dict(owned_session)
+    return await _session_to_dict(owned_session)
 
 
 @router.patch("/{session_id}/ratings/")
-def save_ratings(
+async def save_ratings(
     body: RatingsRequest,
     owned_session: CookingSession = Depends(get_owned_session),
     db: Session = Depends(get_session),
@@ -209,14 +209,14 @@ def save_ratings(
     db.add(owned_session)
     db.commit()
     db.refresh(owned_session)
-    return _session_to_dict(owned_session)
+    return await _session_to_dict(owned_session)
 
 
 @router.get("/{session_id}/")
-def get_session_detail(
+async def get_session_detail(
     owned_session: CookingSession = Depends(get_owned_session),
 ) -> dict:
-    return _session_to_dict(owned_session)
+    return await _session_to_dict(owned_session)
 
 
 # ---------------------------------------------------------------------------
@@ -224,10 +224,17 @@ def get_session_detail(
 # ---------------------------------------------------------------------------
 
 
-def _session_to_dict(s: CookingSession) -> dict:
+async def _session_to_dict(s: CookingSession) -> dict:
+    raw_video_url = None
+    if s.raw_video_url:
+        raw_video_url = await generate_signed_url(
+            bucket=settings.GCS_BUCKET,
+            object_path=s.raw_video_url,
+            expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
+        )
     coaching_video_url = None
     if s.coaching_video_gcs_path:
-        coaching_video_url = generate_signed_url(
+        coaching_video_url = await generate_signed_url(
             bucket=settings.GCS_BUCKET,
             object_path=s.coaching_video_gcs_path,
             expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
@@ -238,7 +245,7 @@ def _session_to_dict(s: CookingSession) -> dict:
         "dish_id": s.dish_id,
         "session_number": s.session_number,
         "status": s.status,
-        "raw_video_url": s.raw_video_url,
+        "raw_video_url": raw_video_url,
         "voice_memo_url": s.voice_memo_url,
         "self_ratings": s.self_ratings or {},
         "voice_transcript": s.voice_transcript,

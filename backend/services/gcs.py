@@ -37,21 +37,26 @@ async def upload_file(
     return object_path
 
 
-def generate_signed_url(
+async def generate_signed_url(
     bucket: str,
     object_path: str,
     expiry_days: int = 7,
 ) -> str:
-    """Generate a v4 signed URL for reading a GCS object.
+    """Generate a v4 signed URL for reading a GCS object (runs in thread pool).
 
-    Requires the runtime service account to have the
+    The IAM signBlob round-trip is blocking; offload to a thread to avoid
+    stalling the event loop. Requires the runtime service account to have the
     iam.serviceAccounts.signBlob permission. Uses Application Default
     Credentials (ADC) — run `gcloud auth application-default login`
     for local development.
     """
-    blob = _get_client().bucket(bucket).blob(object_path)
-    return blob.generate_signed_url(
-        expiration=timedelta(days=expiry_days),
-        method="GET",
-        version="v4",
-    )
+
+    def _sync_sign() -> str:
+        blob = _get_client().bucket(bucket).blob(object_path)
+        return blob.generate_signed_url(
+            expiration=timedelta(days=expiry_days),
+            method="GET",
+            version="v4",
+        )
+
+    return await asyncio.to_thread(_sync_sign)

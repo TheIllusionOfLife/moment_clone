@@ -58,7 +58,7 @@ def embed_and_insert(md_path: pathlib.Path, db: Session) -> None:
         embedding = _embed(principle_text)
         # pgvector expects the literal array syntax: '[0.1,0.2,...]'
         embedding_str = "[" + ",".join(str(v) for v in embedding) + "]"
-        db.execute(
+        result = db.execute(
             text(
                 """
                 INSERT INTO cooking_principles (principle_text, category, embedding)
@@ -68,7 +68,8 @@ def embed_and_insert(md_path: pathlib.Path, db: Session) -> None:
             ),
             {"text": principle_text, "category": category, "embedding": embedding_str},
         )
-        inserted += 1
+        if result.rowcount > 0:  # type: ignore[attr-defined]
+            inserted += 1
 
     db.commit()
     print(f"  {md_path.name}: {inserted} principles ingested")

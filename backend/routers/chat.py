@@ -55,8 +55,7 @@ def list_rooms(
 
 
 @router.get("/rooms/{room_type}/messages/")
-def list_messages(
-    room_type: str,
+async def list_messages(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     room: ChatRoom = Depends(get_owned_chatroom),
@@ -83,7 +82,7 @@ def list_messages(
             "created_at": m.created_at.isoformat(),
         }
         if m.video_gcs_path:
-            msg_dict["video_url"] = generate_signed_url(
+            msg_dict["video_url"] = await generate_signed_url(
                 bucket=settings.GCS_BUCKET,
                 object_path=m.video_gcs_path,
                 expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
