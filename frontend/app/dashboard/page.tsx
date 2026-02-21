@@ -33,7 +33,7 @@ function ProgressDots({ status }: { status: string }) {
 export default function DashboardPage() {
   useOnboardingRedirect();
   const { apiFetch } = useApi();
-  const { data: dishes, isLoading } = useQuery<Dish[]>({
+  const { data: dishes, isLoading, isError } = useQuery<Dish[]>({
     queryKey: ["dishes"],
     queryFn: () => apiFetch<Dish[]>("/api/dishes/"),
   });
@@ -47,7 +47,9 @@ export default function DashboardPage() {
         同じ料理を3回練習して、AIコーチからフィードバックをもらいましょう。
       </p>
 
-      {isLoading ? (
+      {isError ? (
+        <p className="text-sm text-red-600">料理の読み込みに失敗しました。</p>
+      ) : isLoading ? (
         <div className="grid gap-4 sm:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-48" />

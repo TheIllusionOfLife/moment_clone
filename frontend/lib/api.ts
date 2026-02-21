@@ -5,12 +5,23 @@ import { useAuth } from "@clerk/nextjs";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+async function handleResponse<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { detail?: string }).detail ?? `HTTP ${res.status}`,
+    );
+  }
+  return res.json() as Promise<T>;
+}
+
 export function useApi() {
   const { getToken } = useAuth();
 
   const apiFetch = useCallback(
     async function <T>(path: string, options?: RequestInit): Promise<T> {
       const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
       const res = await fetch(`${API_BASE}${path}`, {
         ...options,
         headers: {
@@ -19,13 +30,7 @@ export function useApi() {
           ...options?.headers,
         },
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(
-          (body as { detail?: string }).detail ?? `HTTP ${res.status}`,
-        );
-      }
-      return res.json() as Promise<T>;
+      return handleResponse<T>(res);
     },
     [getToken],
   );
@@ -33,6 +38,7 @@ export function useApi() {
   const apiUpload = useCallback(
     async function <T>(path: string, body: FormData): Promise<T> {
       const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
       const res = await fetch(`${API_BASE}${path}`, {
         method: "POST",
         headers: {
@@ -40,13 +46,7 @@ export function useApi() {
         },
         body,
       });
-      if (!res.ok) {
-        const resBody = await res.json().catch(() => ({}));
-        throw new Error(
-          (resBody as { detail?: string }).detail ?? `HTTP ${res.status}`,
-        );
-      }
-      return res.json() as Promise<T>;
+      return handleResponse<T>(res);
     },
     [getToken],
   );

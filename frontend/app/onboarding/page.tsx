@@ -77,19 +77,24 @@ export default function OnboardingPage() {
   const { apiFetch } = useApi();
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const allAnswered = QUESTIONS.every((q) => answers[q.id]);
 
   async function handleSubmit() {
     if (!allAnswered) return;
     setSubmitting(true);
+    setSubmitError(null);
     try {
       await apiFetch("/api/auth/me/", {
         method: "PATCH",
         body: JSON.stringify({ learner_profile: { answers } }),
       });
       router.replace("/dashboard");
-    } catch {
+    } catch (e) {
+      setSubmitError(
+        e instanceof Error ? e.message : "保存に失敗しました。もう一度お試しください。",
+      );
       setSubmitting(false);
     }
   }
@@ -134,8 +139,11 @@ export default function OnboardingPage() {
         ))}
       </div>
 
+      {submitError && (
+        <p className="mt-4 text-sm text-red-600">{submitError}</p>
+      )}
       <Button
-        className="mt-8 w-full"
+        className="mt-4 w-full"
         disabled={!allAnswered || submitting}
         onClick={handleSubmit}
       >

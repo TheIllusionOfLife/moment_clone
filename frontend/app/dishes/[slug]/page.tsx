@@ -22,26 +22,35 @@ export default function DishDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const { apiFetch } = useApi();
 
-  const { data: dish, isLoading: dishLoading } = useQuery<Dish>({
+  const { data: dish, isLoading: dishLoading, isError: dishError } = useQuery<Dish>({
     queryKey: ["dish", slug],
     queryFn: () => apiFetch<Dish>(`/api/dishes/${slug}/`),
+    enabled: !!slug,
   });
 
-  const { data: sessions, isLoading: sessionsLoading } = useQuery<
+  const { data: sessions, isLoading: sessionsLoading, isError: sessionsError } = useQuery<
     CookingSession[]
   >({
     queryKey: ["sessions", slug],
     queryFn: () =>
       apiFetch<CookingSession[]>(`/api/sessions/?dish_slug=${slug}`),
+    enabled: !!slug,
   });
 
-  const canStartNew = (sessions?.length ?? 0) < 3;
+  const canStartNew = Array.isArray(sessions) && sessions.length < 3;
   const isLoading = dishLoading || sessionsLoading;
 
   if (isLoading)
     return (
       <div className="max-w-2xl mx-auto px-4 py-10">
         <Skeleton className="h-64" />
+      </div>
+    );
+
+  if (dishError || sessionsError)
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-10">
+        <p className="text-sm text-red-600">データの読み込みに失敗しました。</p>
       </div>
     );
 

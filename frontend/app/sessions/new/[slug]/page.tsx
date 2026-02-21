@@ -91,6 +91,7 @@ export default function NewSessionPage() {
       setError(
         e instanceof Error ? e.message : "アップロードに失敗しました",
       );
+      setUploadProgress(0);
       setUploading(false);
     }
   }

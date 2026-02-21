@@ -41,5 +41,9 @@ test.describe("Session detail polling", () => {
 
     await page.goto("/sessions/42");
     await expect(page.getByText(/AI分析中/)).toBeVisible();
+
+    // After polling transitions to text_ready, coaching text should appear
+    await expect(page.getByText("課題あり")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/AI分析中/)).not.toBeVisible();
   });
 });

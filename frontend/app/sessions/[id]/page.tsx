@@ -45,7 +45,7 @@ export default function SessionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { apiFetch } = useApi();
 
-  const { data: session, isLoading } = useQuery<CookingSession>({
+  const { data: session, isLoading, isError, error } = useQuery<CookingSession>({
     queryKey: ["session", id],
     queryFn: () => apiFetch<CookingSession>(`/api/sessions/${id}/`),
     refetchInterval: (query) => {
@@ -59,6 +59,19 @@ export default function SessionDetailPage() {
       <div className="max-w-2xl mx-auto px-4 py-10 space-y-4">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-32" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-10">
+        <Alert variant="destructive">
+          <AlertDescription>
+            セッションの読み込みに失敗しました:{" "}
+            {error instanceof Error ? error.message : "不明なエラー"}
+          </AlertDescription>
+        </Alert>
       </div>
     );
   }
@@ -118,6 +131,7 @@ export default function SessionDetailPage() {
           <video
             src={session.coaching_video_url}
             controls
+            aria-label="コーチング動画"
             className="w-full rounded-lg border border-zinc-200"
           />
         </div>

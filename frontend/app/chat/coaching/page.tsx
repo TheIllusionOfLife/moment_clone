@@ -38,7 +38,9 @@ export default function CoachingChatPage() {
         method: "POST",
         body: JSON.stringify({ text }),
       }),
-    onMutate: (text) => {
+    onMutate: async (text) => {
+      await queryClient.cancelQueries({ queryKey: ["messages", "coaching"] });
+      const previous = queryClient.getQueryData<MessagesResponse>(["messages", "coaching"]);
       const optimistic: Message = {
         id: -Date.now(),
         sender: "user",
@@ -61,6 +63,13 @@ export default function CoachingChatPage() {
         () => bottomRef.current?.scrollIntoView({ behavior: "smooth" }),
         100,
       );
+      return { previous };
+    },
+    onError: (_err, _text, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["messages", "coaching"], context.previous);
+      }
+      setWaitingForReply(false);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["messages", "coaching"] });

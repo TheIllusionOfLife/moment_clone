@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function CookingVideosPage() {
   const { apiFetch } = useApi();
-  const { data, isLoading } = useQuery<MessagesResponse>({
+  const { data, isLoading, isError } = useQuery<MessagesResponse>({
     queryKey: ["messages", "cooking_videos"],
     queryFn: () =>
       apiFetch<MessagesResponse>(
@@ -18,7 +18,9 @@ export default function CookingVideosPage() {
   return (
     <main className="max-w-2xl mx-auto px-4 py-10">
       <h1 className="text-xl font-bold text-zinc-900 mb-6">料理動画</h1>
-      {isLoading ? (
+      {isError ? (
+        <p className="text-sm text-red-600">動画の読み込みに失敗しました。</p>
+      ) : isLoading ? (
         <div className="space-y-4">
           {[0, 1].map((i) => (
             <Skeleton key={i} className="h-24" />
