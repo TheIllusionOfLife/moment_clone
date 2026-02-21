@@ -111,9 +111,7 @@ async def clerk_webhook(
                 # Confirm the collision is the expected clerk_user_id duplicate
                 # (not an unrelated constraint failure such as a missing FK).
                 # If the user doesn't exist, re-raise so Clerk retries the webhook.
-                recovered = db.exec(
-                    select(User).where(User.clerk_user_id == clerk_user_id)
-                ).first()
+                recovered = db.exec(select(User).where(User.clerk_user_id == clerk_user_id)).first()
                 if recovered is None:
                     raise
                 logger.info(

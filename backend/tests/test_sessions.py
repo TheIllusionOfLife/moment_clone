@@ -29,6 +29,7 @@ def client(app, engine, user):
 @pytest.fixture()
 def other_client(app, engine, other_user):
     """Client authenticated as a different user."""
+
     def override_get_session():
         with Session(engine) as session:
             yield session

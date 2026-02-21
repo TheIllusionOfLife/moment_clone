@@ -1,3 +1,7 @@
+> Historical research note: this document captures early reverse-research about
+> production Moment (not our clone MVP design). For current implementation choices,
+> treat `docs/design.md` as the canonical source of truth.
+
 ### 1. ハードウェア（IoTエッジデバイス）
 *   **専用カメラデバイス（Cook Cam）**: 自宅のレンジフード等にマグネットや付属プレートで設置し、コンロ周りを俯瞰して撮影するWi-Fi対応カメラです。
 *   **自動録画・転送機能**: 料理を開始すると自動で録画を開始し（音声は録音しない仕様）、録画データを早送り（倍速）動画として生成・転送する機能が必要です。

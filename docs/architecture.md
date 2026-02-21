@@ -180,10 +180,10 @@ at any time and the AI responds in context of their session.
 | Embeddings | Proprietary | Gemini Embeddings API (`gemini-embedding-001`) |
 | Media storage | S3 | Cloud Storage |
 | Async pipeline | SQS / SNS + Lambda / ECS | Inngest (durable step functions, mounted on FastAPI) |
-| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash`), single-agent structured prompting |
+| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash-preview`), single-agent structured prompting |
 | Key moment detection | Custom CV with timestamp output | Extracted as part of structured prompt output |
 | Knowledge base | Proprietary chef coaching dataset | Curated cooking principles (Markdown → pgvector) |
-| Coaching LLM | Post-trained on chef coaching dataset | Gemini 3 Flash (`gemini-3-flash`) + RAG + learner state |
+| Coaching LLM | Post-trained on chef coaching dataset | Gemini 3 Flash (`gemini-3-flash-preview`) + RAG + learner state |
 | Learner state | PostgreSQL + custom | Supabase PostgreSQL (LearnerState SQLModel) |
 | Feedback latency | Up to 2 days (by design) | ~2–3 min (text) / ~5–10 min (video) |
 | Feedback delivery | Single delivery (video only) | Tiered: text first, video follows |
@@ -198,12 +198,12 @@ at any time and the AI responds in context of their session.
 
 | Agent | Moment | Our Clone |
 |---|---|---|
-| Video Analysis | Custom-trained CV + foundation model | Gemini 3 Flash (`gemini-3-flash`): single-agent structured prompt (events + timestamps + diagnosis in one call) |
-| Key Moment Detection | Custom CV classifier | Gemini 3 Flash (`gemini-3-flash`): extracted as part of structured prompt output |
+| Video Analysis | Custom-trained CV + foundation model | Gemini 3 Flash (`gemini-3-flash-preview`): single-agent structured prompt (events + timestamps + diagnosis in one call) |
+| Key Moment Detection | Custom CV classifier | Gemini 3 Flash (`gemini-3-flash-preview`): extracted as part of structured prompt output |
 | RAG | Pinecone + proprietary chef dataset | Supabase pgvector + curated cooking principles |
-| Coaching Script | Post-trained LLM, 2-part script structure | Gemini 3 Flash (`gemini-3-flash`): Part1 (principle/diagnosis) + Part2 (clip narration) |
-| Dialogue Manager | Custom intent/entity + fallback/escalation | Gemini 3 Flash (`gemini-3-flash`) with session context + conversation history |
-| TTS | Unknown | Google Cloud TTS Neural2 |
+| Coaching Script | Post-trained LLM, 2-part script structure | Gemini 3 Flash (`gemini-3-flash-preview`): Part1 (principle/diagnosis) + Part2 (clip narration) |
+| Dialogue Manager | Custom intent/entity + fallback/escalation | Gemini 3 Flash (`gemini-3-flash-preview`) with session context + conversation history |
+| TTS | Unknown | Google Cloud TTS (Chirp 3 HD ja-JP) |
 | Video Composer | Unknown | FFmpeg: clip extraction + audio sync + concat |
 
 ## Key Gaps vs. Production Moment
@@ -213,7 +213,7 @@ at any time and the AI responds in context of their session.
 | Heat level detection | Custom CV model | Gemini video description + heuristic prompts |
 | Fine-tuned coaching LLM | Post-trained on 4yr chef dataset | Heavy prompt engineering + RAG knowledge base |
 | Auto cooking detection | Custom activity classifier on Cook Cam | Manual start/stop button in app (V2: on-device ML) |
-| Feedback latency | ~2 days (by design) | Same async pattern, target: hours |
+| Feedback latency | ~2 days (by design) | ~2–3 min (text) / ~5–10 min (video) |
 | Multi-language coaching | 5 countries, localized | Start with Japanese only |
 | Hardware camera | Cook Cam (dedicated IoT, self-made) | Phone overhead camera (user-mounted) |
 | Coaching video hosting | moment.page (custom domain) | GCS signed URL (V2: custom page) |

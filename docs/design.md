@@ -10,7 +10,7 @@
 | Chat rooms | Cooking Videos + Coaching only | Core loop only; Help chat deferred |
 | Language | Japanese (ja-JP) | Primary market; single locale simplifies prompts and TTS |
 | Feedback delivery | Tiered — text first (~2–3 min), video follows (~5–10 min) | Users don't wait for video encoding to read diagnosis |
-| Feedback latency target | < 5 minutes to coaching text | vs Moment's 2-day wait — core differentiator |
+| Feedback latency target | ~2–3 min to coaching text, ~5–10 min to coaching video | vs Moment's 2-day wait — core differentiator |
 | Onboarding | 40-question quiz for now | Video-based onboarding under discussion; deferred |
 | Gemini Live | Post-PMF feature | Real-time companion mode; requires stable coaching loop first |
 
@@ -293,7 +293,7 @@ Step 2 — Entity extraction
 ### Stage 1 — Video Analysis Agent
 
 **Input**: raw_video_url, dish.slug, session.session_number
-**Model**: Gemini 3 Flash (`gemini-3-flash`) (video input)
+**Model**: Gemini 3 Flash (`gemini-3-flash-preview`) (video input)
 **Pattern**: Single-agent structured video analysis
 
 Gemini 3's context window handles full cooking video analysis in one call.
@@ -388,7 +388,7 @@ Step 3 — Retrieve session context
 
 **Input**: video_analysis, retrieved_context, learner_state, session.structured_input,
           session.session_number, user.first_name
-**Model**: Gemini 3 Flash (`gemini-3-flash`)
+**Model**: Gemini 3 Flash (`gemini-3-flash-preview`)
 **Delivery**: Immediately after this stage — creates coaching text Message in chat (~2–3 min)
 
 ```
@@ -426,7 +426,7 @@ After Stage 3a completes:
 ### Stage 3b — Narration Script Agent
 
 **Input**: coaching_text, video_analysis, user.first_name
-**Model**: Gemini 3 Flash (`gemini-3-flash`)
+**Model**: Gemini 3 Flash (`gemini-3-flash-preview`)
 
 ```
 Output — narration_script (2-part, feeds Stage 4):
@@ -451,8 +451,8 @@ Output — narration_script (2-part, feeds Stage 4):
 
 ```
 Step 1 — TTS
-  part1_audio = CloudTTS(narration_script.part1, voice="ja-JP-Neural2-B")
-  part2_audio = CloudTTS(narration_script.part2, voice="ja-JP-Neural2-B")
+  part1_audio = CloudTTS(narration_script.part1, voice="ja-JP-Chirp3-HD-Aoede")
+  part2_audio = CloudTTS(narration_script.part2, voice="ja-JP-Chirp3-HD-Aoede")
   outro_music = static asset (applause + fade)
 
 Step 2 — Clip extraction
@@ -491,7 +491,7 @@ Step 6 — Upload
 
 ## Chat Message Delivery
 
-After pipeline completes, the system creates two messages automatically:
+After pipeline completes, the system creates three messages automatically:
 
 **In "Cooking Videos" room:**
 ```python
@@ -541,14 +541,14 @@ POST /api/chat/rooms/coaching/messages/
 
 → Message(sender="user", ...) persisted
 
-→ Background task (Pub/Sub or FastAPI BackgroundTasks):
+→ Background task (FastAPI BackgroundTasks):
     1. Load context:
        - Last N messages in coaching room (conversation history)
        - session = most recent completed session for this user
        - session.coaching_text, session.video_analysis, session.dish.principles
        - learner_state
 
-    2. Gemini call (gemini-3-flash):
+    2. Gemini call (`gemini-3-flash-preview`):
        System: [coaching persona + Japanese language prompt]
        Context: coaching feedback already given + conversation history
        User message: their question
@@ -637,8 +637,8 @@ Browser (speaker)
 | Embeddings | Gemini Embeddings API (`gemini-embedding-001`, 768-dim) |
 | File storage | Google Cloud Storage |
 | AI pipeline | Inngest (durable functions, mounted on FastAPI via `inngest.fast_api.serve()`) |
-| Video analysis | Gemini 3 Flash (`gemini-3-flash`, single-agent structured prompting) |
-| Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) |
+| Video analysis | Gemini 3 Flash (`gemini-3-flash-preview`, single-agent structured prompting) |
+| Coaching LLM | Gemini 3 Flash (`gemini-3-flash-preview`) |
 | TTS | Google Cloud TTS (Chirp 3 HD ja-JP) |
 | Video composition | FFmpeg (in Cloud Run Job container) |
 | Auth | Clerk (Next.js SDK + FastAPI JWT verification via JWKS) |
@@ -707,7 +707,7 @@ Browser (speaker)
 10. Stage 3a: Coaching text → deliver to chat immediately (`text_ready`)
 11. Stage 3b: Narration script generation
 12. Stage 4: TTS + FFmpeg video composition → GCS path
-13. Pub/Sub → pipeline trigger wiring
+13. Inngest event trigger wiring
 
 ### Phase 3 — Frontend (Next.js)
 14. Next.js scaffold (App Router, Biome, bun, Vercel deploy)

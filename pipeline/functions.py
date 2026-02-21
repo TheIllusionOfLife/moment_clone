@@ -3,7 +3,7 @@
 Each stage is a discrete step.run() — Inngest handles per-step retries,
 observability (waterfall view with per-step I/O), and deduplication.
 
-Stages (Phase 2 will fill these in):
+Stages:
   0: Voice memo STT + entity extraction  (optional)
   1: Video analysis                       (Gemini, single-agent structured)
   2: RAG                                  (Supabase pgvector)
@@ -15,19 +15,30 @@ Stages (Phase 2 will fill these in):
 import inngest
 
 from backend.services.inngest_client import inngest_client
+from pipeline.stages.coaching_script import run_coaching_script
+from pipeline.stages.narration_script import run_narration_script
+from pipeline.stages.rag import run_rag
+from pipeline.stages.video_analysis import run_video_analysis
+from pipeline.stages.video_production import run_video_production
+from pipeline.stages.voice_memo import run_voice_memo
 
 
 @inngest_client.create_function(  # type: ignore[arg-type, return-value]
     fn_id="cooking-pipeline",
     trigger=inngest.TriggerEvent(event="video/uploaded"),
     retries=4,
+    concurrency=[inngest.Concurrency(key="event.data.user_id", limit=1)],
 )
 async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
     # Validate event payload early — malformed events should not burn all retries.
     session_id = ctx.event.data.get("session_id")
     if not isinstance(session_id, int):
-        # Log and exit without retrying; nothing useful can be done without a valid ID.
         print(f"ERROR: cooking-pipeline received invalid session_id: {session_id!r}")
+        return
+
+    user_id = ctx.event.data.get("user_id")
+    if not isinstance(user_id, int):
+        print(f"ERROR: cooking-pipeline received invalid user_id: {user_id!r}")
         return
 
     # Idempotency guard: use SELECT FOR UPDATE to prevent concurrent invocations
@@ -73,24 +84,45 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
 
     try:
         # Stage 0 — Voice memo (optional, runs if voice_memo_url is set)
-        await step.run("stage-0-voice-memo", lambda: None)  # type: ignore[arg-type, return-value]
+        await step.run(
+            "stage-0-voice-memo",
+            lambda: run_voice_memo(session_id),  # type: ignore[arg-type, return-value]
+        )
 
-        # Stage 1 — Video analysis
-        await step.run("stage-1-video-analysis", lambda: None)  # type: ignore[arg-type, return-value]
+        # Stage 1 — Video analysis (persists to DB; downstream stages read from there)
+        await step.run(
+            "stage-1-video-analysis",
+            lambda: run_video_analysis(session_id),  # type: ignore[arg-type, return-value]
+        )
 
         # Stage 2 — RAG (pgvector similarity search)
-        await step.run("stage-2-rag", lambda: None)  # type: ignore[arg-type, return-value]
+        retrieved_context: dict = await step.run(  # type: ignore[assignment]
+            "stage-2-rag",
+            lambda: run_rag(session_id),  # type: ignore[arg-type, return-value]
+        )
 
         # Stage 3a — Coaching text → posted to chat immediately
-        await step.run("stage-3a-coaching-text", lambda: None)  # type: ignore[arg-type, return-value]
+        coaching_text: dict = await step.run(  # type: ignore[assignment]
+            "stage-3a-coaching-text",
+            lambda: run_coaching_script(session_id, retrieved_context),  # type: ignore[arg-type, return-value]
+        )
 
         # Stage 3b — Narration script (feeds video production)
-        await step.run("stage-3b-narration-script", lambda: None)  # type: ignore[arg-type, return-value]
+        narration_script: dict = await step.run(  # type: ignore[assignment]
+            "stage-3b-narration-script",
+            lambda: run_narration_script(session_id, coaching_text),  # type: ignore[arg-type, return-value]
+        )
 
         # Stage 4 — TTS + FFmpeg video composition → GCS
-        await step.run("stage-4-video-production", lambda: None)  # type: ignore[arg-type, return-value]
+        await step.run(
+            "stage-4-video-production",
+            lambda: run_video_production(session_id, narration_script),  # type: ignore[arg-type, return-value]
+        )
 
-        await step.run("mark-completed", lambda: _set_terminal_status("completed"))  # type: ignore[arg-type, return-value]
+        await step.run(
+            "mark-completed",
+            lambda: _set_terminal_status("completed"),  # type: ignore[arg-type, return-value]
+        )
     except Exception as exc:
         error_msg = str(exc)
         await step.run(

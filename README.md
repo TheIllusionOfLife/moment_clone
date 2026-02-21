@@ -54,7 +54,7 @@ graph TB
 | AI pipeline | Inngest | Durable step functions in pure Python; mounted on FastAPI; built-in retries + observability |
 | Video analysis | Gemini 3 Flash (`gemini-3-flash-preview`) | Single-agent structured prompting; multimodal video input |
 | Coaching LLM | Gemini 3 Flash (`gemini-3-flash-preview`) | Consistent model across all AI tasks |
-| TTS | Google Cloud TTS (Neural2 ja-JP) | Natural Japanese coaching voice |
+| TTS | Google Cloud TTS (Chirp 3 HD ja-JP) | Natural Japanese coaching voice |
 | Video composition | FFmpeg | Clip extraction + audio sync + concat |
 | Payments | Stripe | Subscriptions |
 | IaC | Terraform | GCP infrastructure |
@@ -184,10 +184,12 @@ moment-clone/
 │
 ├── pipeline/                   # AI pipeline (Inngest durable functions)
 │   ├── functions.py            # Inngest function + step.run() stages
-│   └── stages/                 # Phase 2: voice_memo, video_analysis, rag, coaching, video
+│   ├── stages/                 # voice_memo, video_analysis, rag, coaching_script, narration_script, video_production
+│   └── tests/                  # pytest suite (unit, all external calls mocked)
 │
 ├── knowledge_base/             # Cooking principles for RAG
-│   ├── principles/             # Markdown files per principle
+│   ├── heat_management.md      # Markdown files embedded into pgvector via seed_knowledge_base
+│   ├── moisture_control.md
 │   └── ingest.py               # Embed with Gemini → insert into Supabase pgvector
 │
 ├── alembic/                    # Database migrations

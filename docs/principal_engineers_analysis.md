@@ -344,11 +344,11 @@ the problems not yet solved to their standard:
 
 | Component | Their Approach | Our Approach | Gap |
 |---|---|---|---|
-| Video Analysis Engine | Custom CV + fine-tuned VLM | CHEF-VL pattern with Gemini 3 Flash Preview | Heat precision; hand pose |
-| Learner Analysis | Standalone model on proprietary data | Structured Firestore doc + Gemini classification | Accuracy of skill acquisition detection |
+| Video Analysis Engine | Custom CV + fine-tuned VLM | Single-agent structured analysis with Gemini 3 Flash Preview | Heat precision; hand pose |
+| Learner Analysis | Standalone model on proprietary data | Structured Supabase PostgreSQL record + Gemini classification | Accuracy of skill acquisition detection |
 | Task/Research Agents | Custom multi-agent | LangGraph + Gemini | Minimal gap |
 | Coaching Script Generator | Fine-tuned LLM on chef data | Gemini 3 Flash Preview + RAG + prompt engineering | Coaching tone precision |
 | Voice Memo Processing | Fine-tuned ASR + entity extraction | Cloud STT + phrase hints + Gemini extraction | ASR on rare cooking terms |
-| Coaching Chat Q&A | Custom dialogue system + state machine | Gemini + Firestore session context | Breakdown handling |
+| Coaching Chat Q&A | Custom dialogue system + state machine | Gemini + Supabase session context | Breakdown handling |
 | Onboarding Dialogue | Custom adaptive quiz | Gemini-driven flow | Minimal gap |
-| Context State Machine | Custom | Firestore + session doc | Long-gap re-anchoring |
+| Context State Machine | Custom | Supabase PostgreSQL + session doc | Long-gap re-anchoring |

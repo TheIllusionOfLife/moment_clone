@@ -9,10 +9,10 @@ inngest_client = inngest.Inngest(
 )
 
 
-async def send_video_uploaded(session_id: int) -> None:
+async def send_video_uploaded(session_id: int, user_id: int) -> None:
     """Emit the video/uploaded event to kick off the AI coaching pipeline."""
     event = inngest.Event(
         name="video/uploaded",
-        data={"session_id": session_id},
+        data={"session_id": session_id, "user_id": user_id},
     )
     await inngest_client.send(event)

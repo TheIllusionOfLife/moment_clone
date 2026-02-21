@@ -28,7 +28,7 @@ jobs:
         run: uv run mypy .
 
       - name: Test (pytest)
-        run: uv run pytest backend/tests/ -v
+        run: uv run pytest backend/ pipeline/ -v
         env:
           # Test-only credentials — no real services contacted
           INNGEST_DEV: "1"

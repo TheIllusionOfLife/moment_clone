@@ -1,11 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from google import genai
+from google.genai import types
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 
 from backend.core.auth import get_current_user
-from backend.core.database import get_session
+from backend.core.database import get_engine, get_session
 from backend.core.settings import settings
 from backend.models.chat import ChatRoom, Message
+from backend.models.dish import Dish
+from backend.models.learner_state import LearnerState
+from backend.models.session import CookingSession
 from backend.models.user import User
 from backend.services.gcs import generate_signed_url
 
@@ -97,9 +102,11 @@ class SendMessageRequest(BaseModel):
 
 
 @router.post("/rooms/{room_type}/messages/", status_code=status.HTTP_201_CREATED)
-def send_message(
+async def send_message(
     body: SendMessageRequest,
+    background_tasks: BackgroundTasks,
     room: ChatRoom = Depends(get_owned_chatroom),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> dict:
     if not body.text.strip():
@@ -114,7 +121,27 @@ def send_message(
     db.commit()
     db.refresh(message)
 
-    # AI Q&A response is handled asynchronously in Phase 2 (coaching pipeline)
+    if room.room_type == "coaching":
+        # Find most recent completed session for context (may be None)
+        latest_session = db.exec(
+            select(CookingSession)
+            .where(
+                CookingSession.user_id == current_user.id,
+                CookingSession.status == "completed",
+            )
+            .order_by(col(CookingSession.created_at).desc())
+        ).first()
+        session_id = latest_session.id if latest_session else None
+        if current_user.id is None or room.id is None:
+            raise HTTPException(status_code=500, detail="Invalid user or room state")
+        background_tasks.add_task(
+            _generate_coaching_reply,
+            session_id=session_id,
+            user_id=current_user.id,
+            room_id=room.id,
+            user_text=body.text.strip(),
+        )
+
     return {
         "id": message.id,
         "sender": message.sender,
@@ -122,3 +149,94 @@ def send_message(
         "metadata": message.msg_metadata or {},
         "created_at": message.created_at.isoformat(),
     }
+
+
+def _generate_coaching_reply(
+    session_id: int | None,
+    user_id: int,
+    room_id: int,
+    user_text: str,
+) -> None:
+    """Generate and persist an AI coaching reply in the background.
+
+    Loads session context (coaching_text, video_analysis, dish principles,
+    learner state) and calls Gemini with a coaching persona prompt.
+    Falls back to a general coaching message when no completed session exists.
+    """
+    with Session(get_engine()) as db:
+        # Load last 10 messages for conversation history
+        history = db.exec(
+            select(Message)
+            .where(Message.chat_room_id == room_id)
+            .order_by(col(Message.created_at).desc())
+            .limit(10)
+        ).all()
+        # Reverse to chronological order; drop the most recent user message since
+        # it is passed as `contents=user_text` to Gemini — including it in history
+        # would duplicate it in the prompt context.
+        history_messages = list(reversed(history))
+        if history_messages and history_messages[-1].sender == "user":
+            history_messages = history_messages[:-1]
+        history_text = "\n".join(
+            f"{'ユーザー' if m.sender == 'user' else 'コーチ'}: {m.text}"
+            for m in history_messages
+            if m.text
+        )
+
+        # Build context from most recent completed session
+        context_parts: list[str] = []
+        if session_id is not None:
+            session = db.get(CookingSession, session_id)
+            if session:
+                if session.coaching_text:
+                    ct = session.coaching_text
+                    context_parts.append(
+                        f"前回のフィードバック: 課題={ct.get('mondaiten', '')}, "
+                        f"スキル={ct.get('skill', '')}"
+                    )
+                if session.video_analysis:
+                    context_parts.append(f"動画診断: {session.video_analysis.get('diagnosis', '')}")
+                dish = db.get(Dish, session.dish_id)
+                if dish and dish.principles:
+                    context_parts.append(f"料理の原則: {', '.join(dish.principles)}")
+
+        learner_state = db.exec(select(LearnerState).where(LearnerState.user_id == user_id)).first()
+        if learner_state and learner_state.skills_developing:
+            context_parts.append(f"習得中のスキル: {', '.join(learner_state.skills_developing)}")
+
+        if not context_parts:
+            # No completed session — use fallback message
+            reply = (
+                "まだコーチングセッションが完了していません。"
+                "まず料理動画をアップロードして、AIコーチからのフィードバックを受け取ってみましょう！"
+                "動画を撮影・アップロードすると、約2〜3分で詳しいフィードバックをお届けします。"
+            )
+        else:
+            context_str = "\n".join(context_parts)
+            # Use system_instruction to isolate user content from AI persona prompt,
+            # preventing prompt injection via crafted user messages.
+            system_instruction = (
+                "あなたは料理コーチです。ユーザーの料理スキル向上を支援します。"
+                "以下のコンテキストを参考に、具体的で実践的なアドバイスを日本語で提供してください。\n\n"
+                f"コンテキスト:\n{context_str}\n\n"
+                f"会話履歴:\n{history_text}"
+            )
+            gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            try:
+                response = gemini_client.models.generate_content(
+                    model=settings.GEMINI_MODEL,
+                    contents=user_text,
+                    config=types.GenerateContentConfig(system_instruction=system_instruction),
+                )
+                reply = response.text or ""
+            except Exception:
+                reply = "申し訳ありません。一時的なエラーが発生しました。しばらくしてからもう一度お試しください。"
+
+        ai_message = Message(
+            chat_room_id=room_id,
+            sender="ai",
+            session_id=session_id,
+            text=reply,
+        )
+        db.add(ai_message)
+        db.commit()

@@ -222,7 +222,10 @@ def test_user_created_unrelated_integrity_error_reraises(app):
                     resp = c.post(
                         "/api/webhooks/clerk/",
                         content=body,
-                        headers={**_svix_headers("msg_err_001"), "Content-Type": "application/json"},
+                        headers={
+                            **_svix_headers("msg_err_001"),
+                            "Content-Type": "application/json",
+                        },
                     )
 
     assert resp.status_code == 500
