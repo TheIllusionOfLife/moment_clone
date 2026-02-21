@@ -52,8 +52,8 @@ graph TB
 | Auth | Clerk | Auth UI + session management out of the box; FastAPI verifies JWTs via JWKS |
 | File storage | Google Cloud Storage | Large video files; signed URLs for secure delivery |
 | AI pipeline | Inngest | Durable step functions in pure Python; mounted on FastAPI; built-in retries + observability |
-| Video analysis | Gemini 3 Flash (`gemini-3-flash`) | Single-agent structured prompting; multimodal video input |
-| Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) | Consistent model across all AI tasks |
+| Video analysis | Gemini 3 Flash (`gemini-3-flash-preview`) | Single-agent structured prompting; multimodal video input |
+| Coaching LLM | Gemini 3 Flash (`gemini-3-flash-preview`) | Consistent model across all AI tasks |
 | TTS | Google Cloud TTS (Neural2 ja-JP) | Natural Japanese coaching voice |
 | Video composition | FFmpeg | Clip extraction + audio sync + concat |
 | Payments | Stripe | Subscriptions |
@@ -107,21 +107,26 @@ npx inngest-cli@latest dev
 
 ## Environment Variables
 
+Copy `.env.example` to `.env` and fill in the values. Key variables:
+
 ```bash
 # Supabase
-SUPABASE_URL=http://localhost:54321
-SUPABASE_SERVICE_ROLE_KEY=          # server-side only (never expose to client)
+DATABASE_URL=postgresql://postgres:password@db.<ref>.supabase.co:5432/postgres
+SUPABASE_URL=https://<ref>.supabase.co
+SUPABASE_SECRET_KEY=                # sb_secret_* from Supabase dashboard → Settings → API
 
 # Clerk
 CLERK_SECRET_KEY=
 CLERK_WEBHOOK_SECRET=               # for verifying /api/webhooks/clerk/
-CLERK_JWKS_URL=                     # https://<your-clerk-domain>/.well-known/jwks.json
+CLERK_JWKS_URL=                     # https://<clerk-domain>/.well-known/jwks.json
+CLERK_AUDIENCE=                     # optional: verify JWT aud claim
+CLERK_ISSUER=                       # optional: verify JWT iss claim
 
-# Google Cloud
-GOOGLE_CLOUD_PROJECT=
-GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
+# CORS — comma-separated list of allowed origins
+CORS_ORIGINS=http://localhost:3000,http://localhost:3001
 
-# Cloud Storage
+# Google Cloud (ADC used in production; gcloud auth application-default login for local dev)
+GOOGLE_CLOUD_PROJECT=moment-clone
 GCS_BUCKET=moment-clone-media
 GCS_SIGNED_URL_EXPIRY_DAYS=7
 
@@ -131,14 +136,14 @@ INNGEST_SIGNING_KEY=
 
 # Gemini
 GEMINI_API_KEY=
-GEMINI_MODEL=gemini-3-flash
+GEMINI_MODEL=gemini-3-flash-preview
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 
-# Google Cloud TTS (Chirp 3 HD — configure specific voice name after evaluation)
+# Google Cloud TTS
 TTS_VOICE=ja-JP-Chirp3-HD-Aoede
 TTS_LANGUAGE=ja-JP
 
-# Stripe
+# Stripe (Phase 4)
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_ID_MONTHLY=
@@ -153,10 +158,10 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 moment-clone/
 ├── backend/                    # FastAPI application
-│   ├── main.py                 # App factory, router registration
+│   ├── main.py                 # App factory, router registration, Inngest mount
 │   ├── core/
-│   │   ├── config.py           # Pydantic settings
-│   │   ├── database.py         # SQLModel engine + Supabase session
+│   │   ├── settings.py         # Pydantic-settings (env vars)
+│   │   ├── database.py         # SQLModel engine + get_session dependency
 │   │   └── auth.py             # Clerk JWT verification via JWKS
 │   ├── models/                 # SQLModel table models
 │   │   ├── user.py
@@ -165,11 +170,12 @@ moment-clone/
 │   │   ├── learner_state.py
 │   │   └── chat.py
 │   ├── routers/
-│   │   ├── auth.py             # POST /webhooks/clerk/ + GET /auth/me/
+│   │   ├── auth.py             # POST /api/webhooks/clerk/ + GET /api/auth/me/
 │   │   ├── dishes.py
 │   │   ├── sessions.py
 │   │   └── chat.py
-│   └── services/               # GCS, Pub/Sub, Stripe clients
+│   ├── services/               # GCS upload, Inngest client
+│   └── tests/                  # pytest suite (auth, sessions, webhook, chat)
 │
 ├── frontend/                   # Next.js PWA (App Router)
 │   ├── app/
@@ -177,13 +183,8 @@ moment-clone/
 │   └── lib/                    # Tanstack Query hooks, API client
 │
 ├── pipeline/                   # AI pipeline (Inngest durable functions)
-│   ├── functions.py            # Inngest function definition + step.run() stages
-│   └── stages/
-│       ├── voice_memo.py       # Stage 0: STT + entity extraction
-│       ├── video_analysis.py   # Stage 1: Gemini structured single-agent
-│       ├── rag.py              # Stage 2: Supabase pgvector similarity search
-│       ├── coaching_script.py  # Stage 3: coaching text + narration script
-│       └── video_production.py # Stage 4: Cloud TTS + FFmpeg
+│   ├── functions.py            # Inngest function + step.run() stages
+│   └── stages/                 # Phase 2: voice_memo, video_analysis, rag, coaching, video
 │
 ├── knowledge_base/             # Cooking principles for RAG
 │   ├── principles/             # Markdown files per principle
@@ -192,6 +193,10 @@ moment-clone/
 ├── alembic/                    # Database migrations
 │   └── versions/
 │
+├── .github/workflows/
+│   ├── ci.yml                  # ruff + mypy + pytest on every push/PR
+│   └── deploy.yml              # Docker build → Artifact Registry → Cloud Run (main only)
+├── Dockerfile                  # Production image (python:3.12-slim + uv)
 ├── terraform/                  # GCP infrastructure
 └── docs/                       # Project documentation
 ```
@@ -222,7 +227,7 @@ Coaching text is delivered first (~2–3 min), video follows (~5–10 min).
 ```
 User uploads video
     → POST /api/sessions/{id}/upload/ → GCS
-    → Pub/Sub message published → Cloud Run Job triggered
+    → inngest_client.send("video/uploaded") → Inngest durable pipeline
     → Stage 0: Voice memo STT + entity extraction (optional)
     → Stage 1: Video analysis (Gemini — structured single-agent)
     → Stage 2: RAG retrieval (Supabase pgvector)
@@ -236,16 +241,15 @@ See [`docs/design.md`](docs/design.md) for the full pipeline specification.
 
 ## Deployment
 
-Handled by GitHub Actions (backend) and Vercel native integration (frontend).
+**Backend** — `.github/workflows/deploy.yml` triggers on push to `main`:
+1. Authenticates to GCP via Workload Identity Federation (no JSON key files)
+2. Builds Docker image from `Dockerfile` (python:3.12-slim + uv)
+3. Pushes to Artifact Registry (`asia-northeast1-docker.pkg.dev/moment-clone/...`)
+4. Deploys to Cloud Run with secrets pulled from Secret Manager
 
-```bash
-# Backend — push to main triggers GitHub Actions workflow:
-# lint → test → docker build → push to Artifact Registry → gcloud run deploy
-# Uses Workload Identity Federation (keyless GCP auth — no JSON key files)
+Required GitHub secrets: `WIF_PROVIDER`, `WIF_SERVICE_ACCOUNT`, `CLOUD_RUN_SA`
 
-# Frontend — Vercel deploys automatically on push via GitHub integration
-# Preview deployments per PR; production on merge to main
-```
+**Frontend** — Vercel deploys automatically on push via GitHub integration. Preview deployments per PR; production on merge to `main`.
 
 ## Documentation
 
