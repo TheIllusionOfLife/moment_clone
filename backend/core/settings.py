@@ -7,6 +7,10 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = ""
 
+    # Supabase
+    SUPABASE_URL: str = ""
+    SUPABASE_SECRET_KEY: str = ""  # sb_secret_* — server-side admin operations
+
     # Clerk
     CLERK_SECRET_KEY: str = ""
     CLERK_WEBHOOK_SECRET: str = ""
