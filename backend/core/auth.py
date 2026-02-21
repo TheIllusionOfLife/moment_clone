@@ -1,4 +1,5 @@
 import threading
+import time
 from typing import Annotated
 
 import httpx
@@ -15,6 +16,9 @@ from backend.models.user import User
 _jwks_cache: TTLCache = TTLCache(maxsize=1, ttl=3600)
 _cache_lock = threading.Lock()
 _bearer = HTTPBearer()
+# Tracks when we last force-refreshed JWKS; guards against DoS via unknown-kid tokens.
+_last_force_refresh_at: float = 0.0
+_FORCE_REFRESH_INTERVAL = 60.0  # seconds
 
 
 def _fetch_jwks(force_refresh: bool = False) -> dict:
@@ -37,13 +41,26 @@ def _fetch_jwks(force_refresh: bool = False) -> dict:
 
 
 def _public_key_for_kid(kid: str, force_refresh: bool = False):
+    global _last_force_refresh_at
+
     jwks = _fetch_jwks(force_refresh=force_refresh)
     for key in jwks.get("keys", []):
         if key["kid"] == kid:
             return jwt.algorithms.RSAAlgorithm.from_jwk(key)
+
     if not force_refresh:
-        # Retry once with a fresh JWKS in case keys were recently rotated
-        return _public_key_for_kid(kid, force_refresh=True)
+        # Retry once with a fresh JWKS in case Clerk recently rotated keys.
+        # Rate-limited to _FORCE_REFRESH_INTERVAL to prevent DoS via unknown-kid tokens.
+        with _cache_lock:
+            now = time.monotonic()
+            if now - _last_force_refresh_at >= _FORCE_REFRESH_INTERVAL:
+                _last_force_refresh_at = now
+                do_refresh = True
+            else:
+                do_refresh = False
+        if do_refresh:
+            return _public_key_for_kid(kid, force_refresh=True)
+
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Unknown signing key",

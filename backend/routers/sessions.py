@@ -15,6 +15,10 @@ from backend.models.user import User
 from backend.services.gcs import generate_signed_url, upload_file
 from backend.services.inngest_client import send_video_uploaded
 
+# NOTE: These endpoints are async to allow `await _session_to_dict()` (which calls
+# the async `generate_signed_url`). The SQLModel DB calls inside are still synchronous
+# and will block the event loop under high concurrency. The correct long-term fix is
+# adopting an async DB driver (asyncpg + SQLAlchemy async session) — deferred to Phase 3.
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 ALLOWED_VIDEO_MIMES = {"video/mp4", "video/quicktime"}

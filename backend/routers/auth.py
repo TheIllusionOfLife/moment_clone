@@ -108,6 +108,14 @@ async def clerk_webhook(
                 db.commit()
             except IntegrityError:
                 db.rollback()
+                # Confirm the collision is the expected clerk_user_id duplicate
+                # (not an unrelated constraint failure such as a missing FK).
+                # If the user doesn't exist, re-raise so Clerk retries the webhook.
+                recovered = db.exec(
+                    select(User).where(User.clerk_user_id == clerk_user_id)
+                ).first()
+                if recovered is None:
+                    raise
                 logger.info(
                     "user.created race: user already exists for clerk_user_id=%r", clerk_user_id
                 )

@@ -70,3 +70,39 @@ def test_valid_token_returns_user(app, engine, user, private_key):
     assert resp.status_code == 200
     data = resp.json()
     assert data["clerk_user_id"] == user.clerk_user_id
+
+
+def test_jwks_force_refresh_rate_limited(app, private_key):
+    """Multiple unknown-kid requests within the interval trigger only one JWKS force-refresh."""
+    import backend.core.auth as auth_module
+
+    token = jwt.encode(
+        {"sub": "any"},
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "unknown-kid"},
+    )
+
+    force_refresh_calls = [0]
+
+    def counting_fetch(force_refresh: bool = False) -> dict:
+        if force_refresh:
+            force_refresh_calls[0] += 1
+        # Return empty JWKS — no keys match "unknown-kid", triggering the retry path.
+        # Do NOT call original_fetch to avoid a real HTTP request in tests.
+        return {"keys": []}
+
+    # Reset rate-limit state so the first request is always allowed to refresh.
+    original_ts = auth_module._last_force_refresh_at
+    auth_module._last_force_refresh_at = 0.0
+
+    try:
+        with patch("backend.core.auth._fetch_jwks", side_effect=counting_fetch):
+            for _ in range(3):
+                with TestClient(app) as client:
+                    client.get("/api/auth/me/", headers={"Authorization": f"Bearer {token}"})
+    finally:
+        auth_module._last_force_refresh_at = original_ts
+
+    # All three requests carry an unknown kid, but only the first triggers a force-refresh.
+    assert force_refresh_calls[0] == 1
