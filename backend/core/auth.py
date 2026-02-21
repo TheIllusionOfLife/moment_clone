@@ -58,8 +58,8 @@ def get_current_user(
 
     public_key = _public_key_for_kid(header.get("kid", ""))
 
-    # Verify audience only when CLERK_AUDIENCE is configured; Clerk JWTs omit
-    # the aud claim by default unless explicitly set in the JWT template.
+    # Verify audience/issuer only when explicitly configured.
+    # Clerk JWTs omit the aud claim by default; iss is the Clerk frontend API URL.
     verify_aud = bool(settings.CLERK_AUDIENCE)
     decode_kwargs: dict = {
         "algorithms": ["RS256"],
@@ -67,6 +67,8 @@ def get_current_user(
     }
     if verify_aud:
         decode_kwargs["audience"] = settings.CLERK_AUDIENCE
+    if settings.CLERK_ISSUER:
+        decode_kwargs["issuer"] = settings.CLERK_ISSUER
 
     try:
         payload = jwt.decode(token, public_key, **decode_kwargs)

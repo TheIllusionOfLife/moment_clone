@@ -56,20 +56,45 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
     if not should_proceed:
         return
 
-    # Stage 0 — Voice memo (optional, runs if voice_memo_url is set)
-    await step.run("stage-0-voice-memo", lambda: None)
+    def _set_terminal_status(new_status: str, error: str | None = None) -> None:
+        from sqlmodel import Session as DBSession
 
-    # Stage 1 — Video analysis
-    await step.run("stage-1-video-analysis", lambda: None)
+        from backend.core.database import engine
+        from backend.models.session import CookingSession
 
-    # Stage 2 — RAG (pgvector similarity search)
-    await step.run("stage-2-rag", lambda: None)
+        with DBSession(engine) as db:
+            cooking_session = db.get(CookingSession, session_id)
+            if cooking_session:
+                cooking_session.status = new_status
+                if error:
+                    cooking_session.pipeline_error = error
+                db.add(cooking_session)
+                db.commit()
 
-    # Stage 3a — Coaching text → posted to chat immediately
-    await step.run("stage-3a-coaching-text", lambda: None)
+    try:
+        # Stage 0 — Voice memo (optional, runs if voice_memo_url is set)
+        await step.run("stage-0-voice-memo", lambda: None)
 
-    # Stage 3b — Narration script (feeds video production)
-    await step.run("stage-3b-narration-script", lambda: None)
+        # Stage 1 — Video analysis
+        await step.run("stage-1-video-analysis", lambda: None)
 
-    # Stage 4 — TTS + FFmpeg video composition → GCS
-    await step.run("stage-4-video-production", lambda: None)
+        # Stage 2 — RAG (pgvector similarity search)
+        await step.run("stage-2-rag", lambda: None)
+
+        # Stage 3a — Coaching text → posted to chat immediately
+        await step.run("stage-3a-coaching-text", lambda: None)
+
+        # Stage 3b — Narration script (feeds video production)
+        await step.run("stage-3b-narration-script", lambda: None)
+
+        # Stage 4 — TTS + FFmpeg video composition → GCS
+        await step.run("stage-4-video-production", lambda: None)
+
+        await step.run("mark-completed", lambda: _set_terminal_status("completed"))
+    except Exception as exc:
+        error_msg = str(exc)
+        await step.run(
+            "mark-failed",
+            lambda: _set_terminal_status("failed", error=error_msg),
+        )
+        raise

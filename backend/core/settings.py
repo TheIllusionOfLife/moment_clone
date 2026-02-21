@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     CLERK_WEBHOOK_SECRET: str = ""
     CLERK_JWKS_URL: str = ""
     CLERK_AUDIENCE: str = ""  # optional; set to verify JWT aud claim
+    CLERK_ISSUER: str = ""  # optional; set to verify JWT iss claim (e.g. https://<clerk-domain>)
 
     # CORS — comma-separated list of allowed origins
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"

@@ -126,8 +126,7 @@ async def upload_video(
             detail=f"Invalid content type '{video.content_type}'. Allowed: {sorted(ALLOWED_VIDEO_MIMES)}",
         )
 
-    # Stream upload in chunks to avoid buffering the full file into RAM.
-    chunks: list[bytes] = []
+    # Stream size check without accumulating bytes in Python memory.
     size = 0
     while chunk := await video.read(_CHUNK_SIZE):
         size += len(chunk)
@@ -136,14 +135,15 @@ async def upload_video(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Video exceeds 500 MB limit",
             )
-        chunks.append(chunk)
-    contents = b"".join(chunks)
+
+    # Seek back so GCS can read from the start via the underlying SpooledTemporaryFile.
+    await video.seek(0)
 
     object_path = f"sessions/{owned_session.id}/raw_video_{uuid.uuid4().hex}.mp4"
     gcs_path = await upload_file(
         bucket=settings.GCS_BUCKET,
         object_path=object_path,
-        file_bytes=contents,
+        file_obj=video.file,
         content_type=video.content_type or "video/mp4",
     )
 
@@ -171,7 +171,6 @@ async def upload_voice_memo(
             detail=f"Invalid audio type '{audio.content_type}'. Allowed: {sorted(ALLOWED_AUDIO_MIMES)}",
         )
 
-    chunks: list[bytes] = []
     size = 0
     while chunk := await audio.read(_CHUNK_SIZE):
         size += len(chunk)
@@ -180,14 +179,14 @@ async def upload_voice_memo(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Audio exceeds 100 MB limit",
             )
-        chunks.append(chunk)
-    contents = b"".join(chunks)
+
+    await audio.seek(0)
 
     object_path = f"sessions/{owned_session.id}/voice_memo_{uuid.uuid4().hex}"
     gcs_path = await upload_file(
         bucket=settings.GCS_BUCKET,
         object_path=object_path,
-        file_bytes=contents,
+        file_obj=audio.file,
         content_type=audio.content_type or "audio/m4a",
     )
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 
@@ -57,8 +57,8 @@ def list_rooms(
 @router.get("/rooms/{room_type}/messages/")
 def list_messages(
     room_type: str,
-    page: int = 1,
-    page_size: int = 50,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
     room: ChatRoom = Depends(get_owned_chatroom),
     db: Session = Depends(get_session),
 ) -> dict:

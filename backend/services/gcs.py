@@ -1,5 +1,6 @@
 import asyncio
 from datetime import timedelta
+from typing import BinaryIO
 
 from google.cloud import storage
 
@@ -18,17 +19,19 @@ def _get_client() -> storage.Client:
 async def upload_file(
     bucket: str,
     object_path: str,
-    file_bytes: bytes,
+    file_obj: BinaryIO,
     content_type: str,
 ) -> str:
-    """Upload bytes to GCS (runs in thread pool to avoid blocking event loop).
+    """Upload a file-like object to GCS (runs in thread pool to avoid blocking event loop).
 
+    Accepts a BinaryIO so callers can pass FastAPI's SpooledTemporaryFile directly,
+    avoiding buffering the full upload in Python memory.
     Returns the GCS object path (not a signed URL).
     """
 
     def _sync_upload() -> None:
         blob = _get_client().bucket(bucket).blob(object_path)
-        blob.upload_from_string(file_bytes, content_type=content_type)
+        blob.upload_from_file(file_obj, content_type=content_type)
 
     await asyncio.to_thread(_sync_upload)
     return object_path
