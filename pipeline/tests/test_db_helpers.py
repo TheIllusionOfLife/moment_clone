@@ -1,6 +1,5 @@
 """Tests for pipeline/stages/db_helpers.py."""
 
-import json
 from unittest.mock import patch
 
 import pytest
