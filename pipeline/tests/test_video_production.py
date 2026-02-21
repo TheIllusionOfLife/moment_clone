@@ -28,29 +28,30 @@ def _make_mock_dish():
     return mock_dish
 
 
-def _make_subprocess_run_side_effect(part1_duration: float = 60.0, part2_duration: float = 30.0):
+def _make_subprocess_side_effect(part1_duration: float = 60.0, part2_duration: float = 30.0):
     """
-    Return a side_effect function for subprocess.run that handles:
-    - ffprobe calls: returns JSON with duration
-    - ffmpeg calls: returns success (returncode=0)
+    Return a side_effect for subprocess.run that:
+    - For ffprobe: returns JSON duration (alternating part1/part2).
+    - For ffmpeg: touches the output file (last arg) so open() calls succeed.
     """
-    call_count = {"n": 0}
+    ffprobe_count = {"n": 0}
 
     def side_effect(cmd, **kwargs):
-        call_count["n"] += 1
         result = MagicMock()
         result.returncode = 0
         result.stderr = b""
 
         if cmd[0] == "ffprobe":
-            # Determine which audio file (part1 or part2) by call order.
-            # First ffprobe call → part1 duration, second → part2 duration.
-            if call_count["n"] <= 2:  # first ffprobe (call_count includes prior ffmpeg calls)
-                duration = part1_duration
-            else:
-                duration = part2_duration
+            ffprobe_count["n"] += 1
+            duration = part1_duration if ffprobe_count["n"] == 1 else part2_duration
             result.stdout = json.dumps({"format": {"duration": str(duration)}}).encode()
         else:
+            # ffmpeg — touch the output file (last positional arg) so downstream
+            # open() calls don't raise FileNotFoundError.
+            output_path = cmd[-1]
+            if not output_path.startswith("-"):
+                with open(output_path, "wb") as f:
+                    f.write(b"")
             result.stdout = b""
 
         return result
@@ -113,34 +114,15 @@ def test_run_video_production_success():
     mock_gcs_client = MagicMock()
     mock_gcs_client.bucket.return_value = mock_bucket
 
-    # TTS mock
-    mock_tts_response = MagicMock()
-    mock_tts_response.audio_content = b"fake-audio-data"
-    mock_tts_client = MagicMock()
-    mock_tts_client.synthesize_speech.return_value = mock_tts_response
-
-    # subprocess mock (ffprobe + ffmpeg)
-    call_counter = {"ffprobe": 0}
-
-    def subprocess_side_effect(cmd, **kwargs):
-        result = MagicMock()
-        result.returncode = 0
-        result.stderr = b""
-        if cmd[0] == "ffprobe":
-            call_counter["ffprobe"] += 1
-            if call_counter["ffprobe"] == 1:
-                duration = 60.0
-            else:
-                duration = 30.0
-            result.stdout = json.dumps({"format": {"duration": str(duration)}}).encode()
-        else:
-            result.stdout = b""
-        return result
-
     mock_coaching_room = MagicMock()
     mock_coaching_room.id = 10
     mock_update = MagicMock()
     mock_engine = MagicMock()
+
+    def mock_synthesize_tts(_tts_client, text, out_path):
+        """Write an empty file so downstream path existence checks pass."""
+        with open(out_path, "wb") as f:
+            f.write(b"")
 
     with (
         patch(
@@ -160,11 +142,14 @@ def test_run_video_production_success():
         ),
         patch(
             "pipeline.stages.video_production.texttospeech.TextToSpeechClient",
-            return_value=mock_tts_client,
+        ),
+        patch(
+            "pipeline.stages.video_production._synthesize_tts",
+            side_effect=mock_synthesize_tts,
         ),
         patch(
             "pipeline.stages.video_production.subprocess.run",
-            side_effect=subprocess_side_effect,
+            side_effect=_make_subprocess_side_effect(),
         ),
     ):
         result = run_video_production(42, SAMPLE_NARRATION_SCRIPT)
@@ -193,29 +178,14 @@ def test_video_production_does_not_set_completed_status():
     mock_gcs_client = MagicMock()
     mock_gcs_client.bucket.return_value = mock_bucket
 
-    mock_tts_response = MagicMock()
-    mock_tts_response.audio_content = b"audio"
-    mock_tts_client = MagicMock()
-    mock_tts_client.synthesize_speech.return_value = mock_tts_response
-
-    call_counter = {"ffprobe": 0}
-
-    def subprocess_side_effect(cmd, **kwargs):
-        result = MagicMock()
-        result.returncode = 0
-        result.stderr = b""
-        if cmd[0] == "ffprobe":
-            call_counter["ffprobe"] += 1
-            duration = 60.0 if call_counter["ffprobe"] == 1 else 30.0
-            result.stdout = json.dumps({"format": {"duration": str(duration)}}).encode()
-        else:
-            result.stdout = b""
-        return result
-
     mock_coaching_room = MagicMock()
     mock_coaching_room.id = 10
     mock_update = MagicMock()
     mock_engine = MagicMock()
+
+    def mock_synthesize_tts(_tts_client, text, out_path):
+        with open(out_path, "wb") as f:
+            f.write(b"")
 
     with (
         patch(
@@ -235,11 +205,14 @@ def test_video_production_does_not_set_completed_status():
         ),
         patch(
             "pipeline.stages.video_production.texttospeech.TextToSpeechClient",
-            return_value=mock_tts_client,
+        ),
+        patch(
+            "pipeline.stages.video_production._synthesize_tts",
+            side_effect=mock_synthesize_tts,
         ),
         patch(
             "pipeline.stages.video_production.subprocess.run",
-            side_effect=subprocess_side_effect,
+            side_effect=_make_subprocess_side_effect(),
         ),
     ):
         run_video_production(42, SAMPLE_NARRATION_SCRIPT)
