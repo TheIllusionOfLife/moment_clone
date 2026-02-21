@@ -110,7 +110,7 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
             model=settings.GEMINI_MODEL,
             contents=prompt,
         )
-        coaching_text = _parse_json_response(response.text)
+        coaching_text = _parse_json_response(response.text or "")
 
         # Validate required keys
         missing = [k for k in _REQUIRED_KEYS if k not in coaching_text]
@@ -172,6 +172,7 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
     # Post coaching text to coaching room
     with DBSession(get_engine()) as db:
         coaching_room = get_coaching_room(session.user_id, db)
+        assert coaching_room.id is not None
         post_message(
             coaching_room.id,
             "ai",
@@ -183,6 +184,7 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
     # Post raw video path to cooking_videos room
     with DBSession(get_engine()) as db:
         videos_room = get_cooking_videos_room(session.user_id, db)
+        assert videos_room.id is not None
         post_message(
             videos_room.id,
             "system",

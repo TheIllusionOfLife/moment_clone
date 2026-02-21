@@ -3,7 +3,7 @@
 import tempfile
 
 from google import genai
-from google.cloud import storage
+from google.cloud import storage  # type: ignore[attr-defined]
 from google.genai import types
 
 from backend.core.settings import settings
@@ -34,8 +34,10 @@ def run_video_analysis(session_id: int) -> dict:
 
         # Upload to Gemini File API
         gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        uploaded_file = gemini_client.files.upload(path=tmp_video_path)
+        uploaded_file = gemini_client.files.upload(tmp_video_path)  # type: ignore[misc]
 
+    assert uploaded_file.uri is not None, "Gemini file upload returned no URI"
+    assert uploaded_file.name is not None, "Gemini file upload returned no name"
     try:
         part = types.Part.from_uri(file_uri=uploaded_file.uri, mime_type="video/mp4")
         prompt = (
@@ -56,7 +58,7 @@ def run_video_analysis(session_id: int) -> dict:
     finally:
         gemini_client.files.delete(name=uploaded_file.name)
 
-    result = _parse_json_response(response.text)
+    result = _parse_json_response(response.text or "")
 
     missing = _REQUIRED_KEYS - result.keys()
     if missing:

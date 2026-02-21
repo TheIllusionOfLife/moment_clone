@@ -52,7 +52,7 @@ def run_narration_script(session_id: int, coaching_text: dict) -> dict:
         model=settings.GEMINI_MODEL,
         contents=prompt,
     )
-    narration = _parse_json_response(response.text)
+    narration = _parse_json_response(response.text or "")
 
     # Always override pivot with the fixed canonical string.
     narration["pivot"] = PIVOT_LINE

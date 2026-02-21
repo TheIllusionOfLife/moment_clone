@@ -2,7 +2,7 @@ import asyncio
 from datetime import timedelta
 from typing import BinaryIO
 
-from google.cloud import storage
+from google.cloud import storage  # type: ignore[attr-defined]
 
 # Singleton client — initialized once, reused across all calls.
 # ADC (Application Default Credentials) are resolved at first use.

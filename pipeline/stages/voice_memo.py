@@ -3,7 +3,7 @@
 import tempfile
 
 from google import genai
-from google.cloud import speech, storage
+from google.cloud import speech, storage  # type: ignore[attr-defined]
 
 from backend.core.settings import settings
 from pipeline.stages.db_helpers import (
@@ -58,7 +58,7 @@ def run_voice_memo(session_id: int) -> dict:
     )
 
     try:
-        structured_input = _parse_json_response(gemini_response.text)
+        structured_input = _parse_json_response(gemini_response.text or "")
     except Exception:
         structured_input = {}
 

@@ -131,6 +131,8 @@ async def send_message(
             .order_by(col(CookingSession.created_at).desc())
         ).first()
         session_id = latest_session.id if latest_session else None
+        assert current_user.id is not None
+        assert room.id is not None
         background_tasks.add_task(
             _generate_coaching_reply,
             session_id=session_id,
@@ -216,7 +218,7 @@ async def _generate_coaching_reply(
                 model=settings.GEMINI_MODEL,
                 contents=system_prompt,
             )
-            reply = response.text
+            reply = response.text or ""
 
         ai_message = Message(
             chat_room_id=room_id,

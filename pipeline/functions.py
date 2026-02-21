@@ -79,42 +79,44 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
 
     try:
         # Stage 0 — Voice memo (optional, runs if voice_memo_url is set)
-        await step.run(  # type: ignore[arg-type, return-value]
+        await step.run(
             "stage-0-voice-memo",
-            lambda: run_voice_memo(session_id),
+            lambda: run_voice_memo(session_id),  # type: ignore[arg-type, return-value]
         )
 
         # Stage 1 — Video analysis (persists to DB; downstream stages read from there)
-        await step.run(  # type: ignore[arg-type, return-value]
+        await step.run(
             "stage-1-video-analysis",
-            lambda: run_video_analysis(session_id),
+            lambda: run_video_analysis(session_id),  # type: ignore[arg-type, return-value]
         )
 
         # Stage 2 — RAG (pgvector similarity search)
-        retrieved_context: dict = await step.run(  # type: ignore[arg-type, assignment]
+        retrieved_context: dict = await step.run(  # type: ignore[assignment]
             "stage-2-rag",
-            lambda: run_rag(session_id),
+            lambda: run_rag(session_id),  # type: ignore[arg-type, return-value]
         )
 
         # Stage 3a — Coaching text → posted to chat immediately
-        coaching_text: dict = await step.run(  # type: ignore[arg-type, assignment]
+        coaching_text: dict = await step.run(  # type: ignore[assignment]
             "stage-3a-coaching-text",
-            lambda: run_coaching_script(session_id, retrieved_context),
+            lambda: run_coaching_script(session_id, retrieved_context),  # type: ignore[arg-type, return-value]
         )
 
         # Stage 3b — Narration script (feeds video production)
-        narration_script: dict = await step.run(  # type: ignore[arg-type, assignment]
+        narration_script: dict = await step.run(  # type: ignore[assignment]
             "stage-3b-narration-script",
-            lambda: run_narration_script(session_id, coaching_text),
+            lambda: run_narration_script(session_id, coaching_text),  # type: ignore[arg-type, return-value]
         )
 
         # Stage 4 — TTS + FFmpeg video composition → GCS
-        await step.run(  # type: ignore[arg-type, return-value]
+        await step.run(
             "stage-4-video-production",
-            lambda: run_video_production(session_id, narration_script),
+            lambda: run_video_production(session_id, narration_script),  # type: ignore[arg-type, return-value]
         )
 
-        await step.run("mark-completed", lambda: _set_terminal_status("completed"))  # type: ignore[arg-type, return-value]
+        await step.run(
+            "mark-completed", lambda: _set_terminal_status("completed")  # type: ignore[arg-type, return-value]
+        )
     except Exception as exc:
         error_msg = str(exc)
         await step.run(

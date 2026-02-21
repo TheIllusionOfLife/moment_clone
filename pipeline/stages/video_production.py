@@ -13,7 +13,7 @@ import os
 import subprocess
 import tempfile
 
-from google.cloud import storage, texttospeech
+from google.cloud import storage, texttospeech  # type: ignore[attr-defined]
 from sqlmodel import Session as DBSession
 
 from backend.core.database import get_engine
@@ -192,6 +192,7 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
     # Step 8: Post coaching video message to coaching chat room.
     with DBSession(get_engine()) as db:
         coaching_room = get_coaching_room(session.user_id, db)
+        assert coaching_room.id is not None
         post_message(
             coaching_room.id,
             "ai",
