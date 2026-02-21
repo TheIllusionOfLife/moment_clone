@@ -61,9 +61,8 @@ User records themselves cooking (any camera), uploads the video. No special hard
 required in MVP. The video is stored and processed asynchronously.
 
 ### 2. AI Video Analysis
-Gemini analyses the timelapse video using a dual-agent pattern (CHEF-VL):
-- Action agent: what did the user do and when?
-- Environment state agent: what was the heat level, ingredient state, pan condition?
+Gemini analyses the timelapse video using a single-agent structured analysis pattern:
+- Single pass extraction: what did the user do and when, plus inferred environment state
 - Identifies the single most impactful mistake or improvement area
 - Extracts the key moment timestamp for use in the coaching video
 
@@ -206,7 +205,8 @@ directly drives LTV.
 | Session 3 completion rate | >60% | Proxy for coaching quality and motivation |
 | Session 3 self-rating improvement | >1.0 stars avg vs session 1 | Quantified progress |
 | Month 2 retention | >50% | Product-market fit signal |
-| Time to first coaching received | <24 hours | Pipeline reliability |
+| Time to first coaching text received | 2–3 minutes | Core responsiveness signal |
+| Time to coaching video received | 5–10 minutes | End-to-end pipeline reliability |
 | Coaching video completion rate | >80% | Content quality signal |
 
 ---

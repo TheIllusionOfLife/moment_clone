@@ -60,7 +60,9 @@ def other_user_fixture(db):
 
 @pytest.fixture(name="dish")
 def dish_fixture(db):
-    d = Dish(slug="chahan", name_ja="チャーハン", name_en="Fried Rice", description_ja="炒飯", order=1)
+    d = Dish(
+        slug="chahan", name_ja="チャーハン", name_en="Fried Rice", description_ja="炒飯", order=1
+    )
     db.add(d)
     db.commit()
     db.refresh(d)

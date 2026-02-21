@@ -56,7 +56,7 @@ The specific hardness: steam, lighting variation, ingredient transformation
 
 **With Gemini API?**
 - The LLM doesn't need to remember — **you inject the state**
-- Firestore holds the learner model: `{ skills_developing: [...], recurring_mistakes: [...], session_history: [...] }`
+- Supabase PostgreSQL holds the learner model: `{ skills_developing: [...], recurring_mistakes: [...], session_history: [...] }`
 - RAG retrieves relevant past sessions at coaching time
 - Gemini generates coaching conditioned on all of that context
 - **Verdict: ~95%. This is a data modelling + retrieval problem, not a model problem. Fully solvable.**
@@ -99,7 +99,7 @@ The specific hardness: steam, lighting variation, ingredient transformation
 > *"Build personalization capabilities into conversations based on user preferences and history"*
 
 **With Gemini API?**
-- Fully a context injection problem — Firestore learner state + past session summaries in prompt
+- Fully a context injection problem — Supabase learner state + past session summaries in prompt
 - **Verdict: ~95%.**
 
 ---
@@ -116,7 +116,7 @@ The specific hardness: steam, lighting variation, ingredient transformation
 | Multi-agent orchestration | 95% | Framework + prompt problem |
 | Intent recognition + entity extraction | 95% | Structured output solves this |
 | Fallback / escalation | 90% | Threshold calibration, not AI |
-| Personalization across sessions | 95% | Context injection + Firestore |
+| Personalization across sessions | 95% | Context injection + Supabase PostgreSQL |
 
 ---
 
@@ -156,7 +156,7 @@ The specific hardness: steam, lighting variation, ingredient transformation
   ("stove is on", "pot is empty"), compared against a symbolic recipe graph
 - 80.92% action recognition accuracy in kitchen environments
 - **Verdict**: HIGH feasibility with Gemini API. Directly replicable without retraining.
-  This is the pattern we should adopt for procedural error detection.
+  This should inform our evaluation rubric; MVP still uses single-agent structured analysis.
 - **Recruitment note**: Lead author Ruiqi Wang is a 2025 Google PhD Fellow finishing
   his PhD — prime recruitment window. Real-time inference on embedded hardware.
 
@@ -242,10 +242,10 @@ replicable with Gemini.
 | Layer | Approach | Confidence |
 |---|---|---|
 | Coaching script quality | Prompt engineering + RAG | High |
-| Learner state + personalization | Firestore + context injection | High |
+| Learner state + personalization | Supabase PostgreSQL + context injection | High |
 | Dialogue management | Gemini structured outputs | High |
 | Qualitative heat assessment | Gemini video prompting + color/smoke cues | Medium-High |
-| Procedural error detection | CHEF-VL dual-VLM pattern with Gemini | Medium-High |
+| Procedural error detection | Single-agent Gemini analysis with CHEF-VL-inspired checks | Medium-High |
 | Steam/smoke robustness | Audio fusion (user voice memo + ambient sound) | Medium |
 | Precise heat calibration | Not in MVP — V2 with custom model | Low (V2 only) |
 | Fingertip/hand pose | Not in MVP — V2 with MediaPipe | Low (V2 only) |

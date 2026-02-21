@@ -54,7 +54,7 @@ graph TB
 | AI pipeline | Inngest | Durable step functions in pure Python; mounted on FastAPI; built-in retries + observability |
 | Video analysis | Gemini 3 Flash (`gemini-3-flash-preview`) | Single-agent structured prompting; multimodal video input |
 | Coaching LLM | Gemini 3 Flash (`gemini-3-flash-preview`) | Consistent model across all AI tasks |
-| TTS | Google Cloud TTS (Neural2 ja-JP) | Natural Japanese coaching voice |
+| TTS | Google Cloud TTS (Chirp 3 HD ja-JP) | Natural Japanese coaching voice |
 | Video composition | FFmpeg | Clip extraction + audio sync + concat |
 | Payments | Stripe | Subscriptions |
 | IaC | Terraform | GCP infrastructure |
