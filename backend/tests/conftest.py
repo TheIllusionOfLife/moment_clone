@@ -13,30 +13,56 @@ os.environ.setdefault("CLERK_JWKS_URL", "http://localhost/jwks")
 os.environ.setdefault("CLERK_WEBHOOK_SECRET", "whsec_testonly")
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import Session, SQLModel, create_engine
-from sqlmodel.pool import StaticPool
 
 from backend.models.dish import Dish
 from backend.models.session import CookingSession
 from backend.models.user import User
 
 
+@pytest.fixture(name="db_path")
+def db_path_fixture(tmp_path):
+    """Temporary file-based SQLite database path shared between sync and async engines."""
+    return str(tmp_path / "test.db")
+
+
 @pytest.fixture(name="engine")
-def engine_fixture():
-    """In-memory SQLite engine with all tables created."""
+def engine_fixture(db_path):
+    """Sync SQLite engine with all tables created."""
     engine = create_engine(
-        "sqlite://",
+        f"sqlite:///{db_path}",
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
     yield engine
     SQLModel.metadata.drop_all(engine)
+    engine.dispose()
+
+
+@pytest_asyncio.fixture(name="async_engine")
+async def async_engine_fixture(db_path, engine):
+    """Async SQLite engine sharing the same file-based database as the sync engine."""
+    # engine fixture is a dependency to ensure tables are created first
+    async_eng = create_async_engine(
+        f"sqlite+aiosqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    yield async_eng
+    await async_eng.dispose()
 
 
 @pytest.fixture(name="db")
 def db_fixture(engine):
     with Session(engine) as session:
+        yield session
+
+
+@pytest_asyncio.fixture(name="async_db")
+async def async_db_fixture(async_engine):
+    async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+    async with async_session_factory() as session:
         yield session
 
 
@@ -79,15 +105,21 @@ def cooking_session_fixture(db, user, dish):
 
 
 @pytest.fixture(name="app")
-def app_fixture(engine):
-    """FastAPI TestClient with DB overridden to use in-memory SQLite."""
-    from backend.core.database import get_session
+def app_fixture(engine, async_engine):
+    """FastAPI TestClient with DB overridden to use test SQLite."""
+    from backend.core.database import get_async_session, get_session
     from backend.main import app
 
     def override_get_session():
         with Session(engine) as session:
             yield session
 
+    async def override_get_async_session():
+        async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+        async with async_session_factory() as session:
+            yield session
+
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_async_session] = override_get_async_session
     yield app
     app.dependency_overrides.clear()

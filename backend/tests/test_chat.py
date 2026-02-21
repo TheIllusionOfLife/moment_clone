@@ -2,10 +2,11 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlmodel import select
 
 from backend.core.auth import get_current_user
-from backend.core.database import get_session
+from backend.core.database import get_async_session
 from backend.models.chat import ChatRoom, Message
 from backend.models.session import CookingSession
 
@@ -29,15 +30,16 @@ def cooking_videos_room(db, user):
 
 
 @pytest.fixture()
-def client(app, engine, user, chatroom):  # noqa: ARG001
-    def override_get_session():
-        with Session(engine) as session:
+def client(app, async_engine, user, chatroom):  # noqa: ARG001
+    async def override_get_async_session():
+        async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+        async with async_session_factory() as session:
             yield session
 
     def override_auth():
         return user
 
-    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_async_session] = override_get_async_session
     app.dependency_overrides[get_current_user] = override_auth
     with TestClient(app) as c:
         yield c
@@ -101,18 +103,21 @@ def test_default_pagination_accepted(client):
 # ---------------------------------------------------------------------------
 
 
-def test_send_message_coaching_room_triggers_background_task(app, engine, user, chatroom, mocker):
+def test_send_message_coaching_room_triggers_background_task(
+    app, async_engine, user, chatroom, mocker
+):
     """Posting a user message in the coaching room queues an AI reply task."""
     mock_add_task = mocker.patch("fastapi.BackgroundTasks.add_task")
 
-    def override_get_session():
-        with Session(engine) as session:
+    async def override_get_async_session():
+        async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+        async with async_session_factory() as session:
             yield session
 
     def override_auth():
         return user
 
-    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_async_session] = override_get_async_session
     app.dependency_overrides[get_current_user] = override_auth
 
     try:
@@ -133,7 +138,7 @@ def test_send_message_coaching_room_triggers_background_task(app, engine, user, 
 
 def test_send_message_cooking_videos_room_no_ai_reply(
     app,
-    engine,
+    async_engine,
     user,
     cooking_videos_room,
     mocker,
@@ -141,14 +146,15 @@ def test_send_message_cooking_videos_room_no_ai_reply(
     """Posting to cooking_videos room must NOT trigger an AI reply."""
     mock_add_task = mocker.patch("fastapi.BackgroundTasks.add_task")
 
-    def override_get_session():
-        with Session(engine) as session:
+    async def override_get_async_session():
+        async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+        async with async_session_factory() as session:
             yield session
 
     def override_auth():
         return user
 
-    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_async_session] = override_get_async_session
     app.dependency_overrides[get_current_user] = override_auth
 
     try:
