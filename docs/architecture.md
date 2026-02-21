@@ -62,7 +62,7 @@
 │  - Video upload → Cloud Storage                     │
 │  - Triggers Pub/Sub events                          │
 │  - /ws/companion: WebSocket → Gemini Live [post-PMF]│
-│  Cloud SQL (PostgreSQL) + SQLModel + Alembic        │
+│  Supabase (PostgreSQL + pgvector) + SQLModel + Alembic │
 └──────────┬──────────────────────────────────────────┘
            │ Pub/Sub
 ┌──────────▼──────────────────────────────────────────┐
@@ -76,7 +76,7 @@
 │  │    - Single-agent structured prompting      │   │
 │  │    - cooking_events + key_moment + diagnosis│   │
 │  ├─────────────────────────────────────────────┤   │
-│  │ 2. RAG Agent (Vertex AI Vector Search)      │   │
+│  │ 2. RAG Agent (Supabase pgvector)            │   │
 │  │    - Retrieve relevant cooking principles   │   │
 │  │    - Retrieve past session summaries        │   │
 │  ├─────────────────────────────────────────────┤   │
@@ -169,19 +169,23 @@ at any time and the AI responds in context of their session.
 | Layer | Moment (AWS) | Our Clone (GCP + Vercel) |
 |---|---|---|
 | Client | iOS + Android native app | Next.js PWA (Vercel) — no App Store needed |
+| Frontend components | Unknown | shadcn/ui + Tailwind CSS |
+| Frontend data fetching | Unknown | Tanstack Query |
 | Camera | Dedicated Cook Cam IoT device | Smartphone camera (overhead mount, native camera app) |
 | API backend | Django + DRF on ECS | FastAPI on Cloud Run |
 | ORM / Migrations | Django ORM | SQLModel + Alembic |
-| Auth | Django sessions | JWT (python-jose) |
-| Primary DB | PostgreSQL | Cloud SQL (PostgreSQL) |
+| Auth | Django sessions | Clerk (Next.js SDK + JWKS verification in FastAPI) |
+| Primary DB | PostgreSQL | Supabase (PostgreSQL + pgvector) |
+| Vector search | Pinecone (proprietary chef data) | Supabase pgvector — same DB, no separate service |
+| Embeddings | Proprietary | Gemini Embeddings API (`text-embedding-004`) |
 | Media storage | S3 | Cloud Storage |
 | Async event bus | SQS / SNS | Pub/Sub |
 | Pipeline workers | Lambda / ECS | Cloud Run Jobs |
-| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash`) single-agent structured prompting |
+| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash`), single-agent structured prompting |
 | Key moment detection | Custom CV with timestamp output | Extracted as part of structured prompt output |
-| Knowledge base | Pinecone (4yr proprietary chef data) | Vertex AI Vector Search + curated knowledge base |
+| Knowledge base | Proprietary chef coaching dataset | Curated cooking principles (Markdown → pgvector) |
 | Coaching LLM | Post-trained on chef coaching dataset | Gemini 3 Flash (`gemini-3-flash`) + RAG + learner state |
-| Learner state | PostgreSQL + custom | PostgreSQL (LearnerState SQLModel) |
+| Learner state | PostgreSQL + custom | Supabase PostgreSQL (LearnerState SQLModel) |
 | Feedback latency | Up to 2 days (by design) | ~2–3 min (text) / ~5–10 min (video) |
 | Feedback delivery | Single delivery (video only) | Tiered: text first, video follows |
 | TTS (coaching audio) | Unknown | Google Cloud TTS (Neural2 ja-JP) |
@@ -197,7 +201,7 @@ at any time and the AI responds in context of their session.
 |---|---|---|
 | Video Analysis | Custom-trained CV + foundation model | Gemini 3 Flash (`gemini-3-flash`): single-agent structured prompt (events + timestamps + diagnosis in one call) |
 | Key Moment Detection | Custom CV classifier | Gemini 3 Flash (`gemini-3-flash`): extracted as part of structured prompt output |
-| RAG | Pinecone + proprietary chef dataset | Vertex AI Vector Search + curated knowledge base |
+| RAG | Pinecone + proprietary chef dataset | Supabase pgvector + curated cooking principles |
 | Coaching Script | Post-trained LLM, 2-part script structure | Gemini 3 Flash (`gemini-3-flash`): Part1 (principle/diagnosis) + Part2 (clip narration) |
 | Dialogue Manager | Custom intent/entity + fallback/escalation | Gemini 3 Flash (`gemini-3-flash`) with session context + conversation history |
 | TTS | Unknown | Google Cloud TTS Neural2 |

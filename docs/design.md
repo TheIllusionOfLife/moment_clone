@@ -19,8 +19,8 @@
 ## System Components
 
 ```
-Next.js PWA (Vercel)
-    ↓ REST + JWT
+Next.js PWA (Vercel) + Clerk (auth UI)
+    ↓ REST + Clerk JWT (verified via JWKS)
 FastAPI (Cloud Run)
     ↓ store raw video
 Cloud Storage
@@ -29,15 +29,15 @@ Pub/Sub
     ↓ trigger
 AI Pipeline (Cloud Run Job)
     ├── Stage 0: Voice Memo STT + extraction (optional)
-    ├── Stage 1: Video Analysis (Gemini 3 Flash (structured video analysis))
-    ├── Stage 2: RAG Agent               (Vertex AI Vector Search)
-    ├── Stage 3a: Coaching Text          → delivered to chat (~2–3 min)
-    ├── Stage 3b: Narration Script       (Gemini 3 Flash)
-    └── Stage 4: Video Production        (Cloud TTS + FFmpeg)
+    ├── Stage 1: Video Analysis            (Gemini 3 Flash, structured single-agent)
+    ├── Stage 2: RAG Agent                 (Supabase pgvector)
+    ├── Stage 3a: Coaching Text            → delivered to chat (~2–3 min)
+    ├── Stage 3b: Narration Script         (Gemini 3 Flash)
+    └── Stage 4: Video Production          (Cloud TTS + FFmpeg)
          ↓ upload coaching_video.mp4
 Cloud Storage → GCS path → signed URL at read time
     ↓ write result
-Cloud SQL (PostgreSQL)
+Supabase (PostgreSQL + pgvector)
     ↓ coaching video delivered to chat (~5–10 min)
 ```
 
@@ -215,12 +215,17 @@ class Message(SQLModel, table=True):
 ## API Endpoints (Django REST Framework)
 
 ### Auth
+Auth UI (sign-in, sign-up, user management) is handled entirely by Clerk's Next.js SDK.
+FastAPI never issues or stores passwords — it only verifies Clerk JWTs via JWKS.
+
 ```
-POST   /api/auth/register/
-POST   /api/auth/login/
-POST   /api/auth/logout/
-GET    /api/auth/me/
+POST   /api/webhooks/clerk/     → Clerk calls this on user.created / user.updated
+                                  FastAPI creates/updates User row in Supabase
+GET    /api/auth/me/            → returns current user from Supabase (JWT required)
 ```
+
+All other endpoints require `Authorization: Bearer <clerk_session_token>`.
+FastAPI middleware fetches Clerk JWKS and verifies the token on each request.
 
 ### Onboarding
 ```
@@ -320,15 +325,26 @@ session.save()
 ### Stage 2 — RAG Agent
 
 **Input**: video_analysis.diagnosis, dish.principles, learner_state
-**Store**: Vertex AI Vector Search (cooking principles knowledge base)
+**Store**: Supabase pgvector (cooking principles knowledge base)
+— pgvector chosen over Vertex AI Vector Search: smaller corpus (~100–200 principles),
+  no GCP-specific indexing overhead, same PostgreSQL connection already in use
 
 ```
-Query: diagnosis + dish principles
-Retrieve: top-3 relevant cooking principles with explanation and examples
-Also retrieve: relevant past session summaries from learner_state
+Step 1 — Embed query
+  Gemini Embeddings API (text-embedding-004):
+  query_text = diagnosis + " " + dish.principles.join(", ")
+  query_vector = embed(query_text)
+
+Step 2 — pgvector similarity search
+  SELECT * FROM cooking_principles
+  ORDER BY embedding <=> query_vector
+  LIMIT 3;
+
+Step 3 — Retrieve session context
+  Pull relevant past session summaries from learner_state (already in PostgreSQL)
 ```
 
-**Output**: retrieved_context (passed to Stage 3)
+**Output**: retrieved_context (passed to Stage 3a)
 
 ---
 
@@ -565,18 +581,20 @@ Browser (speaker)
 | Layer | Technology |
 |---|---|
 | Frontend | Next.js (PWA, App Router, deployed on Vercel) |
+| Frontend components | shadcn/ui + Tailwind CSS |
+| Frontend data fetching | Tanstack Query |
 | Backend API | Python / FastAPI |
 | ORM + Migrations | SQLModel + Alembic |
-| Database | Cloud SQL (PostgreSQL 16) |
+| Database + Vector search | Supabase (PostgreSQL 16 + pgvector) |
+| Embeddings | Gemini Embeddings API (`text-embedding-004`) |
 | File storage | Google Cloud Storage |
 | Async events | Pub/Sub |
 | AI pipeline runner | Cloud Run Jobs |
 | Video analysis | Gemini 3 Flash (`gemini-3-flash`, single-agent structured prompting) |
 | Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) |
-| Vector search | Vertex AI Vector Search |
 | TTS | Google Cloud TTS (Neural2 ja-JP) |
 | Video composition | FFmpeg (in Cloud Run Job container) |
-| Auth | JWT (python-jose) |
+| Auth | Clerk (Next.js SDK + FastAPI JWT verification via JWKS) |
 | Payments | Stripe (subscriptions) |
 | Frontend hosting | Vercel |
 | Backend hosting | Cloud Run (FastAPI) |
@@ -586,6 +604,30 @@ Browser (speaker)
 | Python linter/formatter | ruff |
 | Frontend package manager | bun |
 | Frontend linter/formatter | Biome |
+
+## Tech Decision Rationale
+
+**Supabase (PostgreSQL + pgvector)** replaces both Cloud SQL and Vertex AI Vector Search.
+- pgvector handles the cooking principles knowledge base; the corpus is small (~100–200 principles) and pgvector is sufficient at this scale
+- Eliminates a GCP-specific service (Vertex AI Vector Search) that requires VPC peering, dedicated index endpoints, and per-query billing
+- Single database for both relational data and vector search — simpler ops, one connection string
+- Cheaper: Supabase Pro ($25/month) vs Cloud SQL + Vertex AI Vector Search indexing fees
+
+**Clerk** replaces hand-rolled JWT auth.
+- Next.js SDK provides auth UI (sign-in, sign-up, user management) out of the box — no auth pages to build
+- FastAPI verifies Clerk-issued JWTs via Clerk's JWKS endpoint — no shared secret needed
+- User record in Supabase created via Clerk webhook on first sign-in (sync pattern)
+- Eliminates the full auth implementation from Phase 1 scope
+
+**shadcn/ui + Tailwind CSS** for frontend components.
+- Ownership model: components are copied into the repo, not installed as a dependency — no version lock-in
+- Radix UI primitives underneath ensure accessibility out of the box
+- Tailwind is the standard pairing for Next.js App Router projects
+
+**Tanstack Query** for frontend server state.
+- Handles caching, background refetch, stale-while-revalidate — essential for polling pipeline status
+- `useQuery` with `refetchInterval` is the natural pattern for watching `text_ready → completed` transitions
+- Eliminates hand-rolled `useEffect` + `fetch` patterns
 
 ---
 
@@ -602,7 +644,7 @@ Browser (speaker)
 6. Cloud Run Job scaffold (pipeline entrypoint + idempotency guard)
 7. Stage 0: Voice memo STT + entity extraction (optional pre-stage)
 8. Stage 1: Video Analysis Agent (Gemini, structured single-agent)
-9. Stage 2: RAG Agent (Vertex AI Vector Search + knowledge base ingest)
+9. Stage 2: RAG Agent (Supabase pgvector similarity search)
 10. Stage 3a: Coaching text → deliver to chat immediately (`text_ready`)
 11. Stage 3b: Narration script generation
 12. Stage 4: TTS + FFmpeg video composition → GCS path
