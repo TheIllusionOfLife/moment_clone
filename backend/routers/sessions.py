@@ -159,7 +159,7 @@ async def upload_video(
     db.refresh(owned_session)
 
     assert owned_session.id is not None  # always set after db.refresh()
-    await send_video_uploaded(owned_session.id)
+    await send_video_uploaded(owned_session.id, owned_session.user_id)
 
     return await _session_to_dict(owned_session)
 
