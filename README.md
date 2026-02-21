@@ -2,6 +2,42 @@
 
 A clone of [Cookpad's moment](https://cookwithmoment.com) — an AI-powered personal cooking coaching service. Users upload a video of themselves cooking, receive a personalized coaching video with AI voice narration, and repeat the same dish three times to build transferable cooking skills.
 
+## Architecture
+
+```mermaid
+graph TB
+    subgraph Client["Client (Vercel)"]
+        PWA["Next.js PWA\nClerk auth UI · shadcn/ui + Tailwind"]
+    end
+
+    subgraph Backend["Backend (Cloud Run)"]
+        API["FastAPI\nClerk JWT verification · SQLModel + Alembic"]
+    end
+
+    subgraph Storage["Storage"]
+        DB["Supabase\nPostgreSQL + pgvector"]
+        GCS["Google Cloud Storage\nvideo files"]
+    end
+
+    subgraph Pipeline["AI Pipeline (Inngest durable functions)"]
+        S0["Stage 0 · Voice Memo\nGoogle STT + Gemini (optional)"]
+        S1["Stage 1 · Video Analysis\nGemini 3 Flash"]
+        S2["Stage 2 · RAG\npgvector similarity search"]
+        S3a["Stage 3a · Coaching Text\nGemini → chat  ~2–3 min"]
+        S3b["Stage 3b · Narration Script\nGemini"]
+        S4["Stage 4 · Video Production\nCloud TTS + FFmpeg  ~5–10 min"]
+        S0 --> S1 --> S2 --> S3a --> S3b --> S4
+    end
+
+    PWA -->|"REST + Clerk JWT"| API
+    API <-->|"SQLModel ORM"| DB
+    API -->|"upload video"| GCS
+    API -->|"video/uploaded event"| Pipeline
+    S3a -->|"text message"| DB
+    S4 -->|"video GCS path"| DB
+    S4 -.->|"Web Push"| PWA
+```
+
 ## Tech Stack
 
 | Layer | Technology | Why |
