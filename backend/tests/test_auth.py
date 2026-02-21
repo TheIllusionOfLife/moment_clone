@@ -94,7 +94,7 @@ def test_jwks_force_refresh_rate_limited(app, private_key):
 
     # Reset rate-limit state so the first request is always allowed to refresh.
     original_ts = auth_module._last_force_refresh_at
-    auth_module._last_force_refresh_at = 0.0
+    auth_module._last_force_refresh_at = float("-inf")
 
     try:
         with patch("backend.core.auth._fetch_jwks", side_effect=counting_fetch):

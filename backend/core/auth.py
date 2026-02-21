@@ -17,7 +17,7 @@ _jwks_cache: TTLCache = TTLCache(maxsize=1, ttl=3600)
 _cache_lock = threading.Lock()
 _bearer = HTTPBearer()
 # Tracks when we last force-refreshed JWKS; guards against DoS via unknown-kid tokens.
-_last_force_refresh_at: float = 0.0
+_last_force_refresh_at: float = float("-inf")
 _FORCE_REFRESH_INTERVAL = 60.0  # seconds
 
 
