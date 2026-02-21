@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -13,8 +14,9 @@ class CookingPrinciple(SQLModel, table=True):
     """
 
     __tablename__ = "cooking_principles"  # type: ignore[assignment]
+    __table_args__ = (UniqueConstraint("principle_text", "category"),)
 
     id: int | None = Field(default=None, primary_key=True)
     principle_text: str
     category: str | None = None
-    created_at: datetime | None = Field(default_factory=datetime.utcnow)
+    created_at: datetime | None = Field(default_factory=lambda: datetime.now(UTC))

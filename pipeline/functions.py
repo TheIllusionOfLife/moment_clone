@@ -23,17 +23,26 @@ from backend.services.inngest_client import inngest_client
     retries=4,
 )
 async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
-    session_id: int = ctx.event.data["session_id"]
+    # Validate event payload early — malformed events should not burn all retries.
+    session_id = ctx.event.data.get("session_id")
+    if not isinstance(session_id, int):
+        # Log and exit without retrying; nothing useful can be done without a valid ID.
+        print(f"ERROR: cooking-pipeline received invalid session_id: {session_id!r}")
+        return
 
-    # Idempotency guard: skip if not in an uploadable state
+    # Idempotency guard: use SELECT FOR UPDATE to prevent concurrent invocations
+    # from both proceeding past this check for the same session.
     def _check_and_set_processing() -> bool:
         from sqlmodel import Session as DBSession
+        from sqlmodel import select
 
         from backend.core.database import engine
         from backend.models.session import CookingSession
 
         with DBSession(engine) as db:
-            cooking_session = db.get(CookingSession, session_id)
+            cooking_session = db.exec(
+                select(CookingSession).where(CookingSession.id == session_id).with_for_update()
+            ).first()
             if cooking_session is None:
                 return False
             if cooking_session.status not in ("uploaded", "failed"):

@@ -1,3 +1,5 @@
+import asyncio
+
 import inngest
 
 from backend.core.settings import settings
@@ -9,11 +11,10 @@ inngest_client = inngest.Inngest(
 )
 
 
-def send_video_uploaded(session_id: int) -> None:
+async def send_video_uploaded(session_id: int) -> None:
     """Emit the video/uploaded event to kick off the AI coaching pipeline."""
-    inngest_client.send(
-        inngest.Event(
-            name="video/uploaded",
-            data={"session_id": session_id},
-        )
+    event = inngest.Event(
+        name="video/uploaded",
+        data={"session_id": session_id},
     )
+    await asyncio.to_thread(inngest_client.send, event)

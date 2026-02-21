@@ -2,6 +2,7 @@ import inngest.fast_api
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.core.settings import settings
 from backend.routers import auth, chat, dishes, sessions
 from backend.services.inngest_client import inngest_client
 from pipeline.functions import cooking_pipeline
@@ -14,10 +15,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

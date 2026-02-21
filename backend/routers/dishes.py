@@ -16,7 +16,12 @@ def list_dishes(
     db: Session = Depends(get_session),
 ) -> list[dict]:
     dishes = db.exec(select(Dish).order_by(Dish.order)).all()
-    return [_dish_with_progress(d, current_user.id, db) for d in dishes]
+    # Fetch all progress rows in one query to avoid N+1
+    progress_rows = db.exec(
+        select(UserDishProgress).where(UserDishProgress.user_id == current_user.id)
+    ).all()
+    progress_map = {p.dish_id: p for p in progress_rows}
+    return [_dish_with_progress(d, progress_map.get(d.id)) for d in dishes]
 
 
 @router.get("/{slug}/")
@@ -28,16 +33,16 @@ def get_dish(
     dish = db.exec(select(Dish).where(Dish.slug == slug)).first()
     if dish is None:
         raise HTTPException(status_code=404, detail="Dish not found")
-    return _dish_with_progress(dish, current_user.id, db)
-
-
-def _dish_with_progress(dish: Dish, user_id: int, db: Session) -> dict:
     progress = db.exec(
         select(UserDishProgress).where(
-            UserDishProgress.user_id == user_id,
+            UserDishProgress.user_id == current_user.id,
             UserDishProgress.dish_id == dish.id,
         )
     ).first()
+    return _dish_with_progress(dish, progress)
+
+
+def _dish_with_progress(dish: Dish, progress: UserDishProgress | None) -> dict:
     return {
         "id": dish.id,
         "slug": dish.slug,
@@ -50,7 +55,11 @@ def _dish_with_progress(dish: Dish, user_id: int, db: Session) -> dict:
         "order": dish.order,
         "progress": {
             "status": progress.status if progress else "not_started",
-            "started_at": progress.started_at.isoformat() if progress and progress.started_at else None,
-            "completed_at": progress.completed_at.isoformat() if progress and progress.completed_at else None,
+            "started_at": progress.started_at.isoformat()
+            if progress and progress.started_at
+            else None,
+            "completed_at": progress.completed_at.isoformat()
+            if progress and progress.completed_at
+            else None,
         },
     }

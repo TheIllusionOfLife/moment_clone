@@ -9,13 +9,13 @@ Usage (via seed script):
 
 import pathlib
 
-import google.generativeai as genai
+from google import genai
 from sqlalchemy import text
 from sqlmodel import Session
 
 from backend.core.settings import settings
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
+_genai_client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 
 def _parse_principles(md_path: pathlib.Path) -> list[tuple[str, str]]:
@@ -37,11 +37,11 @@ def _parse_principles(md_path: pathlib.Path) -> list[tuple[str, str]]:
 
 
 def _embed(text_content: str) -> list[float]:
-    result = genai.embed_content(
+    result = _genai_client.models.embed_content(
         model=f"models/{settings.GEMINI_EMBEDDING_MODEL}",
-        content=text_content,
+        contents=text_content,
     )
-    return result["embedding"]  # type: ignore[return-value]
+    return list(result.embeddings[0].values)
 
 
 def embed_and_insert(md_path: pathlib.Path, db: Session) -> None:
@@ -57,7 +57,7 @@ def embed_and_insert(md_path: pathlib.Path, db: Session) -> None:
                 """
                 INSERT INTO cooking_principles (principle_text, category, embedding)
                 VALUES (:text, :category, :embedding::vector)
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (principle_text, category) DO NOTHING
                 """
             ),
             {"text": principle_text, "category": category, "embedding": embedding_str},

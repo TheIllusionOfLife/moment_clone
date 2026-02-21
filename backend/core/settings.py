@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     CLERK_SECRET_KEY: str = ""
     CLERK_WEBHOOK_SECRET: str = ""
     CLERK_JWKS_URL: str = ""
+    CLERK_AUDIENCE: str = ""  # optional; set to verify JWT aud claim
+
+    # CORS — comma-separated list of allowed origins
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
 
     # Google Cloud
     GOOGLE_CLOUD_PROJECT: str = "moment-clone"
@@ -27,7 +31,7 @@ class Settings(BaseSettings):
 
     # Gemini
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-3-flash"
+    GEMINI_MODEL: str = "gemini-3-flash-preview"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
     # TTS
@@ -38,6 +42,10 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     STRIPE_PRICE_ID_MONTHLY: str = ""
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
 
 settings = Settings()

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
@@ -11,7 +11,7 @@ class ChatRoom(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)
     room_type: str  # "coaching" | "cooking_videos"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class Message(SQLModel, table=True):
@@ -28,4 +28,4 @@ class Message(SQLModel, table=True):
     # Field named 'metadata' is reserved by SQLAlchemy; use msg_metadata mapped to the DB column.
     msg_metadata: dict | None = Field(default=None, sa_column=Column("metadata", JSON))
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -1,5 +1,6 @@
 import json
 
+from cachetools import TTLCache
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlmodel import Session, select
 from svix.webhooks import Webhook, WebhookVerificationError
@@ -13,9 +14,9 @@ from backend.models.user import User
 
 router = APIRouter()
 
-# In-memory idempotency set for webhook deduplication.
-# For multi-instance deployments, replace with a Redis SET with TTL.
-_processed_webhook_ids: set[str] = set()
+# Bounded idempotency cache: max 10,000 IDs, 24-hour TTL.
+# For multi-instance deployments, replace with Redis SET with TTL.
+_processed_webhook_ids: TTLCache = TTLCache(maxsize=10_000, ttl=86400)
 
 
 @router.post("/api/webhooks/clerk/", status_code=200)
@@ -26,13 +27,10 @@ async def clerk_webhook(
     svix_timestamp: str = Header(alias="svix-timestamp"),
     svix_signature: str = Header(alias="svix-signature"),
 ) -> dict:
-    # Idempotency: skip already-processed events
-    if svix_id in _processed_webhook_ids:
-        return {"status": "already_processed"}
-
     body = await request.body()
 
-    # Verify signature via svix library (handles timestamp tolerance ±5 min)
+    # Verify signature first — idempotency check must come after to prevent
+    # forged svix-id headers from poisoning the deduplication cache.
     wh = Webhook(settings.CLERK_WEBHOOK_SECRET)
     try:
         wh.verify(
@@ -48,6 +46,10 @@ async def clerk_webhook(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid webhook signature",
         ) from err
+
+    # Idempotency: skip already-processed events (after signature is verified)
+    if svix_id in _processed_webhook_ids:
+        return {"status": "already_processed"}
 
     try:
         payload = json.loads(body)
@@ -86,7 +88,7 @@ async def clerk_webhook(
             db.add(ChatRoom(user_id=user.id, room_type="cooking_videos"))
             db.commit()
 
-    _processed_webhook_ids.add(svix_id)
+    _processed_webhook_ids[svix_id] = True
     return {"status": "ok"}
 
 

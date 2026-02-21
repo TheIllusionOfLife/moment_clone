@@ -48,7 +48,10 @@ def list_rooms(
     db: Session = Depends(get_session),
 ) -> list[dict]:
     rooms = db.exec(select(ChatRoom).where(ChatRoom.user_id == current_user.id)).all()
-    return [{"id": r.id, "room_type": r.room_type, "created_at": r.created_at.isoformat()} for r in rooms]
+    return [
+        {"id": r.id, "room_type": r.room_type, "created_at": r.created_at.isoformat()}
+        for r in rooms
+    ]
 
 
 @router.get("/rooms/{room_type}/messages/")

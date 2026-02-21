@@ -1,8 +1,9 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from backend.core.auth import get_current_user
@@ -21,6 +22,8 @@ MAX_VIDEO_BYTES = 500 * 1024 * 1024  # 500 MB
 
 ALLOWED_AUDIO_MIMES = {"audio/mp4", "audio/mpeg", "audio/wav", "audio/webm", "audio/m4a"}
 MAX_AUDIO_BYTES = 100 * 1024 * 1024  # 100 MB
+
+_CHUNK_SIZE = 1024 * 1024  # 1 MB read chunks
 
 
 # ---------------------------------------------------------------------------
@@ -49,10 +52,10 @@ class CreateSessionRequest(BaseModel):
 
 
 class RatingsRequest(BaseModel):
-    appearance: int
-    taste: int
-    texture: int
-    aroma: int
+    appearance: int = Field(ge=1, le=5)
+    taste: int = Field(ge=1, le=5)
+    texture: int = Field(ge=1, le=5)
+    aroma: int = Field(ge=1, le=5)
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +105,11 @@ def create_session(
         session_number=session_number,
     )
     db.add(cooking_session)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Session already exists") from err
     db.refresh(cooking_session)
     return _session_to_dict(cooking_session)
 
@@ -119,15 +126,21 @@ async def upload_video(
             detail=f"Invalid content type '{video.content_type}'. Allowed: {sorted(ALLOWED_VIDEO_MIMES)}",
         )
 
-    contents = await video.read()
-    if len(contents) > MAX_VIDEO_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Video exceeds 500 MB limit",
-        )
+    # Stream upload in chunks to avoid buffering the full file into RAM.
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await video.read(_CHUNK_SIZE):
+        size += len(chunk)
+        if size > MAX_VIDEO_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Video exceeds 500 MB limit",
+            )
+        chunks.append(chunk)
+    contents = b"".join(chunks)
 
     object_path = f"sessions/{owned_session.id}/raw_video_{uuid.uuid4().hex}.mp4"
-    gcs_path = upload_file(
+    gcs_path = await upload_file(
         bucket=settings.GCS_BUCKET,
         object_path=object_path,
         file_bytes=contents,
@@ -141,7 +154,7 @@ async def upload_video(
     db.commit()
     db.refresh(owned_session)
 
-    send_video_uploaded(owned_session.id)
+    await send_video_uploaded(owned_session.id)
 
     return _session_to_dict(owned_session)
 
@@ -158,15 +171,20 @@ async def upload_voice_memo(
             detail=f"Invalid audio type '{audio.content_type}'. Allowed: {sorted(ALLOWED_AUDIO_MIMES)}",
         )
 
-    contents = await audio.read()
-    if len(contents) > MAX_AUDIO_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Audio exceeds 100 MB limit",
-        )
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await audio.read(_CHUNK_SIZE):
+        size += len(chunk)
+        if size > MAX_AUDIO_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Audio exceeds 100 MB limit",
+            )
+        chunks.append(chunk)
+    contents = b"".join(chunks)
 
     object_path = f"sessions/{owned_session.id}/voice_memo_{uuid.uuid4().hex}"
-    gcs_path = upload_file(
+    gcs_path = await upload_file(
         bucket=settings.GCS_BUCKET,
         object_path=object_path,
         file_bytes=contents,
@@ -187,7 +205,7 @@ def save_ratings(
     db: Session = Depends(get_session),
 ) -> dict:
     owned_session.self_ratings = body.model_dump()
-    owned_session.updated_at = datetime.utcnow()
+    owned_session.updated_at = datetime.now(UTC)
     db.add(owned_session)
     db.commit()
     db.refresh(owned_session)
