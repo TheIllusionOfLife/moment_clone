@@ -115,7 +115,8 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
         )
 
         await step.run(
-            "mark-completed", lambda: _set_terminal_status("completed")  # type: ignore[arg-type, return-value]
+            "mark-completed",
+            lambda: _set_terminal_status("completed"),  # type: ignore[arg-type, return-value]
         )
     except Exception as exc:
         error_msg = str(exc)
