@@ -6,7 +6,7 @@ Usage:
 
 from sqlmodel import Session, select
 
-from backend.core.database import engine
+from backend.core.database import get_engine
 from backend.models.dish import Dish
 
 STARTER_DISHES = [
@@ -53,7 +53,7 @@ STARTER_DISHES = [
 
 
 def seed() -> None:
-    with Session(engine) as db:
+    with Session(get_engine()) as db:
         for dish in STARTER_DISHES:
             existing = db.exec(select(Dish).where(Dish.slug == dish.slug)).first()
             if existing is None:

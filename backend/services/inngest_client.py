@@ -1,5 +1,3 @@
-import asyncio
-
 import inngest
 
 from backend.core.settings import settings
@@ -17,4 +15,4 @@ async def send_video_uploaded(session_id: int) -> None:
         name="video/uploaded",
         data={"session_id": session_id},
     )
-    await asyncio.to_thread(inngest_client.send, event)
+    await inngest_client.send(event)

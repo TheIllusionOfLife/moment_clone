@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from backend.core.auth import get_current_user
 from backend.core.database import get_session
@@ -15,13 +15,13 @@ def list_dishes(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> list[dict]:
-    dishes = db.exec(select(Dish).order_by(Dish.order)).all()
+    dishes = db.exec(select(Dish).order_by(col(Dish.order))).all()
     # Fetch all progress rows in one query to avoid N+1
     progress_rows = db.exec(
         select(UserDishProgress).where(UserDishProgress.user_id == current_user.id)
     ).all()
     progress_map = {p.dish_id: p for p in progress_rows}
-    return [_dish_with_progress(d, progress_map.get(d.id)) for d in dishes]
+    return [_dish_with_progress(d, progress_map.get(d.id)) for d in dishes]  # type: ignore[arg-type]
 
 
 @router.get("/{slug}/")

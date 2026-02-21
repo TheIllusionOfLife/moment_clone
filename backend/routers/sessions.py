@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from backend.core.auth import get_current_user
 from backend.core.database import get_session
@@ -75,7 +75,7 @@ def list_sessions(
         if dish is None:
             raise HTTPException(status_code=404, detail="Dish not found")
         stmt = stmt.where(CookingSession.dish_id == dish.id)
-    sessions = db.exec(stmt.order_by(CookingSession.created_at.desc())).all()
+    sessions = db.exec(stmt.order_by(col(CookingSession.created_at).desc())).all()
     return [_session_to_dict(s) for s in sessions]
 
 
@@ -154,6 +154,7 @@ async def upload_video(
     db.commit()
     db.refresh(owned_session)
 
+    assert owned_session.id is not None  # always set after db.refresh()
     await send_video_uploaded(owned_session.id)
 
     return _session_to_dict(owned_session)

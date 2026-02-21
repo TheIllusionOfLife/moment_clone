@@ -41,7 +41,13 @@ def _embed(text_content: str) -> list[float]:
         model=f"models/{settings.GEMINI_EMBEDDING_MODEL}",
         contents=text_content,
     )
-    return list(result.embeddings[0].values)
+    embeddings = result.embeddings
+    if not embeddings:
+        raise ValueError("Embedding API returned no embeddings")
+    values = embeddings[0].values
+    if values is None:
+        raise ValueError("Embedding has no values")
+    return list(values)
 
 
 def embed_and_insert(md_path: pathlib.Path, db: Session) -> None:
