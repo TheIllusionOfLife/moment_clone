@@ -54,7 +54,11 @@
 └─────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────┐
-│  Mobile App: Flutter (iOS + Android)                │
+│  Web App: Django templates + HTMX  [MVP]            │
+│  Chat rooms: My Coaching / Cooking Videos           │
+│  Video upload (manual) + voice memo + self-ratings  │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
+│  Mobile App: Flutter (iOS + Android)  [post-MVP]    │
 │  Chat rooms: My Coaching / Help / Cooking Videos    │
 │  + In-app camera for overhead cooking recording     │
 │  + Voice memo recording for self-assessment         │
@@ -71,7 +75,7 @@
 ┌──────────▼──────────────────────────────────────────┐
 │  AI Pipeline Workers (Cloud Run Jobs)               │
 │  ┌─────────────────────────────────────────────┐   │
-│  │ 1. Video Analysis Agent (Gemini 3 Flash Preview)    │   │
+│  │ 1. Video Analysis Agent (Gemini 3 Flash (`gemini-3-flash`))    │   │
 │  │    - Analyze full timelapse video           │   │
 │  │    - Extract cooking events with timestamps │   │
 │  │    - Identify THE key moment timestamp      │   │
@@ -82,7 +86,7 @@
 │  │    - Retrieve user's past session context   │   │
 │  ├─────────────────────────────────────────────┤   │
 │  │ 3. Coaching Script Agent (Gemini 3 Flash)   │   │
-│  │    - Learner state from Firestore           │   │
+│  │    - Learner state from PostgreSQL (Cloud SQL) │ │
 │  │    - Generates structured coaching text:    │   │
 │  │      🍳 今回の問題点                          │   │
 │  │      🍳 身につけるべきスキル                   │   │
@@ -181,11 +185,11 @@ at any time and the AI responds in context of their session.
 | Media storage | S3 | Cloud Storage |
 | Async event bus | SQS / SNS | Pub/Sub |
 | Pipeline workers | Lambda / ECS | Cloud Run Jobs |
-| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash Preview (video) + cooking heuristics |
-| Key moment detection | Custom CV with timestamp output | Gemini 3 Flash Preview timestamp extraction prompt |
+| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash`) (video) + cooking heuristics |
+| Key moment detection | Custom CV with timestamp output | Gemini 3 Flash (`gemini-3-flash`) timestamp extraction prompt |
 | Knowledge base | Pinecone (4yr proprietary chef data) | Vertex AI Vector Search + manual knowledge base |
-| Coaching LLM | Post-trained on chef coaching dataset | Gemini 3 Flash Preview + RAG + structured learner state |
-| Learner state | PostgreSQL + custom | Firestore (per-user structured doc) |
+| Coaching LLM | Post-trained on chef coaching dataset | Gemini 3 Flash (`gemini-3-flash`) + RAG + structured learner state |
+| Learner state | PostgreSQL + custom | PostgreSQL (LearnerState ORM model) |
 | TTS (coaching audio) | Unknown | Google Cloud TTS (Neural2 ja-JP) |
 | Video composition | Unknown (FFmpeg likely) | FFmpeg on Cloud Run Jobs |
 | Coaching video hosting | moment.page (external) | GCS signed URL or Cloud Run page |
@@ -197,11 +201,11 @@ at any time and the AI responds in context of their session.
 
 | Agent | Moment | Our Clone |
 |---|---|---|
-| Video Analysis | Custom-trained CV + foundation model | Gemini 3 Flash Preview: events + timestamps |
-| Key Moment Detection | Custom CV classifier | Gemini 3 Flash Preview: "identify the single most important timestamp" |
+| Video Analysis | Custom-trained CV + foundation model | Gemini 3 Flash (`gemini-3-flash`): single-agent CoVT (events + timestamps + diagnosis in one call) |
+| Key Moment Detection | Custom CV classifier | Gemini 3 Flash (`gemini-3-flash`): extracted as part of CoVT prompt output |
 | RAG | Pinecone + proprietary chef dataset | Vertex AI Vector Search + curated knowledge base |
-| Coaching Script | Post-trained LLM, 2-part script structure | Gemini 3 Flash Preview: Part1 (principle/diagnosis) + Part2 (clip narration) |
-| Dialogue Manager | Custom intent/entity + fallback/escalation | Gemini 3 Flash Preview with session context |
+| Coaching Script | Post-trained LLM, 2-part script structure | Gemini 3 Flash (`gemini-3-flash`): Part1 (principle/diagnosis) + Part2 (clip narration) |
+| Dialogue Manager | Custom intent/entity + fallback/escalation | Gemini 3 Flash (`gemini-3-flash`) with session context + conversation history |
 | TTS | Unknown | Google Cloud TTS Neural2 |
 | Video Composer | Unknown | FFmpeg: clip extraction + audio sync + concat |
 

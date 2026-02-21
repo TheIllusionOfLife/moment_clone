@@ -24,9 +24,9 @@ Cloud Storage
 Pub/Sub
     ↓ trigger
 AI Pipeline (Cloud Run Job)
-    ├── Stage 1: Video Analysis Agent    (Gemini 3 Flash Preview)
+    ├── Stage 1: Video Analysis Agent    (Gemini 3 Flash (`gemini-3-flash`))
     ├── Stage 2: RAG Agent               (Vertex AI Vector Search)
-    ├── Stage 3: Coaching Script Agent   (Gemini 3 Flash Preview)
+    ├── Stage 3: Coaching Script Agent   (Gemini 3 Flash (`gemini-3-flash`))
     └── Stage 4: Video Production        (Cloud TTS + FFmpeg)
          ↓ upload coaching_video.mp4
 Cloud Storage → signed URL
@@ -46,6 +46,10 @@ class User(AbstractUser):
     first_name       = CharField(max_length=100)
     email            = EmailField(unique=True)
     onboarding_done  = BooleanField(default=False)
+    subscription_status = CharField(
+                         choices=["free", "active", "past_due", "cancelled"],
+                         default="free"
+                       )  # enforced at session creation: free users get 1 session only
     learner_profile  = JSONField(default=dict)
     # {
     #   "cooking_experience_years": 5,
@@ -84,6 +88,9 @@ class UserDishProgress(Model):
                        ])
     started_at       = DateTimeField(null=True)
     completed_at     = DateTimeField(null=True)
+
+    class Meta:
+        unique_together = [("user", "dish")]
 ```
 
 ### Session
@@ -95,8 +102,8 @@ class Session(Model):
     session_number   = IntegerField()           # 1, 2, or 3
 
     # User input
-    raw_video_url    = URLField()               # GCS path (timelapse or full video)
-    voice_memo_url   = URLField(null=True)      # GCS path to user's voice self-assessment
+    raw_video_url    = URLField(blank=True)     # GCS path — blank until upload completes
+    voice_memo_url   = URLField(null=True, blank=True)  # GCS path to user's voice self-assessment
     self_ratings     = JSONField(default=dict)
     # {
     #   "appearance": 3,  "taste": 4,
@@ -117,6 +124,7 @@ class Session(Model):
                          "completed",      # coaching ready
                          "failed"          # pipeline error
                        ], default="uploaded")
+    pipeline_job_id  = UUIDField(null=True, blank=True)  # idempotency key; set on job start
     pipeline_started_at = DateTimeField(null=True)
     pipeline_error   = TextField(blank=True)
 
@@ -148,11 +156,21 @@ class Session(Model):
     # }
 
     # Video output (Stage 4)
-    coaching_video_url = URLField(blank=True)   # GCS signed URL to coaching_video.mp4
-    coaching_video_expires_at = DateTimeField(null=True)
+    # Store the immutable GCS object path; generate signed URL at read time in the serializer.
+    # This avoids stale URLs in chat history when the 7-day expiry passes.
+    coaching_video_gcs_path = CharField(max_length=500, blank=True)  # e.g. "sessions/42/coaching_video.mp4"
 
     created_at       = DateTimeField(auto_now_add=True)
     updated_at       = DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("user", "dish", "session_number")]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(session_number__in=[1, 2, 3]),
+                name="session_number_1_to_3",
+            )
+        ]
 ```
 
 ### LearnerState
@@ -270,28 +288,57 @@ GET    /api/learner-state/               → current learner state
 
 Triggered by Pub/Sub message after video upload. Runs as Cloud Run Job.
 
+### Stage 0 — Voice Memo Processing (pre-pipeline, optional)
+
+If `voice_memo_url` is set, run before the main pipeline stages:
+
+```
+Step 1 — STT
+  Google Cloud Speech-to-Text → voice_transcript (ja-JP)
+  Fallback: if no voice memo, voice_transcript = ""
+
+Step 2 — Entity extraction
+  Gemini prompt: "Extract from this cooking self-assessment transcript:
+    identified_issues (list), questions (list), emotional_state (string)"
+  → structured_input JSON
+  Fallback: if transcript empty, structured_input = {}
+```
+
+**Output**: `session.voice_transcript`, `session.structured_input`
+
+---
+
 ### Stage 1 — Video Analysis Agent
 
 **Input**: raw_video_url, dish.slug, session.session_number
-**Model**: Gemini 3 Flash Preview (video input)
-**Pattern**: CHEF-VL dual-agent
+**Model**: Gemini 3 Flash (`gemini-3-flash`) (video input)
+**Pattern**: Single-agent Chain-of-Video-Thought (CoVT)
+
+Gemini 3's context window handles full cooking video analysis in one call.
+The dual-agent pattern (CHEF-VL) is unnecessary overhead.
 
 ```
-Agent A — Action Agent
-  Prompt: "Watch this cooking video. List all cooking actions with timestamps.
-           Format: [{ t, event, duration }]"
+Prompt: "Watch this cooking video of {dish_name}. Think step by step:
 
-Agent B — Environment State Agent
-  Prompt: "Watch this cooking video. At each key moment, describe the state:
-           pan temperature (too_low/correct/too_high), ingredient state,
-           any visual failure signs (smoke, sticking, clumping)."
+  1. List all cooking events with timestamps: [{ t, event, duration }]
+  2. At each event, describe the environment state:
+     pan temperature (too_low/correct/too_high), ingredient state,
+     any visual failure signs (smoke, sticking, clumping)
+  3. Identify THE single most critical mistake or improvement area
+  4. Identify the key_moment_timestamp (best frame showing the issue)
+  5. Write a one-sentence diagnosis
 
-Synthesis Agent
-  Input: action list + state list + dish recipe graph
-  Prompt: "Given these actions and states, identify:
-           1. The single most critical mistake or improvement area
-           2. The key_moment_timestamp (the frame that best shows the issue)
-           3. A one-sentence diagnosis"
+  Output as JSON: { cooking_events, key_moment_timestamp,
+                    key_moment_seconds, diagnosis }"
+```
+
+**Idempotency guard** (pipeline entrypoint):
+```python
+if session.pipeline_job_id is not None:
+    return  # already processed — at-least-once Pub/Sub delivery guard
+session.pipeline_job_id = uuid4()
+session.status = "processing"
+session.save()
 ```
 
 **Output**: `session.video_analysis` (JSON)
@@ -317,7 +364,7 @@ Also retrieve: relevant past session summaries from learner_state
 
 **Input**: video_analysis, retrieved_context, learner_state, session.structured_input,
           session.session_number, user.first_name
-**Model**: Gemini 3 Flash Preview
+**Model**: Gemini 3 Flash (`gemini-3-flash`)
 
 ```
 System prompt:
@@ -367,20 +414,27 @@ Step 2 — Clip extraction
   → key_moment_clip.mp4
 
 Step 3 — Intro segment
-  FFmpeg: trim raw_video to length of part1_audio
-  Overlay part1_audio
+  FFmpeg: trim raw_video to duration of part1_audio
+  Mix: -filter_complex "[0:v][1:a]" (video stream + part1 audio, replace original audio)
   → intro_segment.mp4
 
-Step 4 — Compose final video
-  FFmpeg concat:
+Step 4 — Key moment segment
+  FFmpeg: overlay part2_audio onto key_moment_clip starting at t=0
+  Audio starts simultaneously with video; clip duration = max(clip_duration, part2_audio_duration)
+  Mix: -filter_complex "[0:v][1:a]amerge" (replace clip audio with narration)
+  → key_moment_segment.mp4
+
+Step 5 — Compose final video
+  FFmpeg concat (concat demuxer, same codec):
     intro_segment.mp4      (part1 TTS over timelapse)
-  + key_moment_clip.mp4    (part2 TTS over user's actual footage)
-  + outro.mp4              (music + fade)
+  + key_moment_segment.mp4 (part2 TTS synced to user's actual footage)
+  + outro.mp4              (outro.mp3 over black frame or freeze)
   → coaching_video.mp4
 
-Step 5 — Upload
-  GCS upload → generate signed URL (7-day expiry)
-  Update session.coaching_video_url
+Step 6 — Upload
+  GCS upload → store object path in session.coaching_video_gcs_path
+  (e.g. "sessions/{session_id}/coaching_video.mp4")
+  Signed URL generated at read time in the API serializer (7-day expiry)
   Update session.status = "completed"
 ```
 
@@ -424,6 +478,39 @@ Message(
 
 ---
 
+## Coaching Chat Q&A Flow
+
+Users can send follow-up questions in the Coaching room after receiving feedback.
+
+```
+POST /api/chat/rooms/coaching/messages/
+  { "text": "なぜ卵を先に入れてはいけないのですか？" }
+
+→ Message(sender="user", ...) persisted
+
+→ Background task (Pub/Sub or Django Q):
+    1. Load context:
+       - Last N messages in coaching room (conversation history)
+       - session = most recent completed session for this user
+       - session.coaching_text, session.video_analysis, session.dish.principles
+       - learner_state
+
+    2. Gemini call (gemini-3-flash):
+       System: [coaching persona + Japanese language prompt]
+       Context: coaching feedback already given + conversation history
+       User message: their question
+
+    3. Persist AI response:
+       Message(sender="ai", text=response, session=session, ...)
+
+    4. (MVP: polling or HTMX refresh; V2: WebSocket push)
+```
+
+**Fallback**: if no completed session exists, AI responds with a general cooking tip
+and prompts the user to complete their first session.
+
+---
+
 ## Web UI Pages
 
 ```
@@ -449,8 +536,8 @@ Message(
 | File storage | Google Cloud Storage |
 | Async events | Pub/Sub |
 | AI pipeline runner | Cloud Run Jobs |
-| Video analysis | Gemini 3 Flash Preview (video input) |
-| Coaching LLM | Gemini 3 Flash Preview |
+| Video analysis | Gemini 3 Flash (`gemini-3-flash`) (video input) |
+| Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) |
 | Vector search | Vertex AI Vector Search |
 | TTS | Google Cloud TTS (Neural2 ja-JP) |
 | Video composition | FFmpeg (in Cloud Run Job container) |
@@ -474,12 +561,13 @@ Message(
 5. Pub/Sub publisher on upload
 
 ### Phase 2 — AI Pipeline
-6. Cloud Run Job scaffold (pipeline entrypoint)
-7. Stage 1: Video Analysis Agent (Gemini)
-8. Stage 2: RAG Agent (Vertex AI Vector Search + knowledge base)
-9. Stage 3: Coaching Script Agent (Gemini)
-10. Stage 4: TTS + FFmpeg video composition
-11. Pub/Sub → pipeline trigger wiring
+6. Cloud Run Job scaffold (pipeline entrypoint + idempotency guard)
+7. Stage 0: Voice memo STT + entity extraction (optional pre-stage)
+8. Stage 1: Video Analysis Agent (Gemini CoVT)
+9. Stage 2: RAG Agent (Vertex AI Vector Search + knowledge base)
+10. Stage 3: Coaching Script Agent (Gemini)
+11. Stage 4: TTS + FFmpeg video composition → GCS path storage
+12. Pub/Sub → pipeline trigger wiring
 
 ### Phase 3 — Chat + Delivery
 12. ChatRoom + Message models

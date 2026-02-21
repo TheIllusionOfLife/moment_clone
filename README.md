@@ -12,8 +12,8 @@ A clone of [Cookpad's moment](https://cookwithmoment.com) — an AI-powered pers
 | Storage | Google Cloud Storage |
 | Async queue | Google Cloud Pub/Sub |
 | AI pipeline | Cloud Run Jobs |
-| Video analysis | Gemini 3 Flash Preview (multimodal) |
-| Coaching LLM | Gemini 3 Flash Preview |
+| Video analysis | Gemini 3 Flash (`gemini-3-flash`, multimodal) |
+| Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) |
 | Vector search | Vertex AI Vector Search |
 | TTS | Google Cloud TTS (Neural2 ja-JP) |
 | Video composition | FFmpeg |
@@ -84,7 +84,7 @@ PUBSUB_SUBSCRIPTION=pipeline-worker
 
 # Gemini
 GEMINI_API_KEY=
-GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_MODEL=gemini-3-flash
 
 # Vertex AI
 VERTEX_AI_LOCATION=us-central1
