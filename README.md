@@ -6,8 +6,9 @@ A clone of [Cookpad's moment](https://cookwithmoment.com) — an AI-powered pers
 
 | Layer | Technology |
 |---|---|
-| Backend | Python / Django 5.x + Django REST Framework |
-| Frontend | Django templates + HTMX |
+| Frontend | Next.js (PWA, deployed on Vercel) |
+| Backend API | Python / FastAPI |
+| ORM + Migrations | SQLModel + Alembic |
 | Database | PostgreSQL (Cloud SQL) |
 | Storage | Google Cloud Storage |
 | Async queue | Google Cloud Pub/Sub |
@@ -17,14 +18,18 @@ A clone of [Cookpad's moment](https://cookwithmoment.com) — an AI-powered pers
 | Vector search | Vertex AI Vector Search |
 | TTS | Google Cloud TTS (Neural2 ja-JP) |
 | Video composition | FFmpeg |
-| Hosting | Google Cloud Run |
+| Auth | JWT (python-jose) |
+| Payments | Stripe |
+| Frontend hosting | Vercel |
+| Backend hosting | Google Cloud Run |
 | IaC | Terraform |
-| CI/CD | Cloud Build |
+| CI/CD | Cloud Build (backend) + Vercel CI (frontend) |
 
 ## Prerequisites
 
 - Python 3.12+
-- [uv](https://github.com/astral-sh/uv) (package manager)
+- [uv](https://github.com/astral-sh/uv) (Python package manager)
+- [bun](https://bun.sh) (frontend package manager)
 - [Docker](https://docs.docker.com/get-docker/)
 - [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) authenticated to a GCP project
 - FFmpeg (`brew install ffmpeg` on macOS)
@@ -37,22 +42,25 @@ A clone of [Cookpad's moment](https://cookwithmoment.com) — an AI-powered pers
 git clone <repo-url>
 cd moment-clone
 
-# 2. Install dependencies
+# 2. Backend: install dependencies and configure
 uv sync
-
-# 3. Copy environment variables
 cp .env.example .env
 # Fill in: DATABASE_URL, GCS_BUCKET, GEMINI_API_KEY, GOOGLE_CLOUD_PROJECT, etc.
 
-# 4. Run database migrations
-uv run python manage.py migrate
+# 3. Run database migrations
+uv run alembic upgrade head
 
-# 5. Load seed data (dishes, cooking principles knowledge base)
-uv run python manage.py seed_dishes
-uv run python manage.py seed_knowledge_base
+# 4. Seed initial data
+uv run python -m backend.scripts.seed_dishes
+uv run python -m backend.scripts.seed_knowledge_base
 
-# 6. Start the development server
-uv run python manage.py runserver
+# 5. Start the backend API
+uv run uvicorn backend.main:app --reload
+
+# 6. Frontend (separate terminal)
+cd frontend
+bun install
+bun dev
 
 # 7. (Separate terminal) Start the Pub/Sub emulator for local pipeline testing
 gcloud beta emulators pubsub start --project=local-dev
@@ -64,10 +72,11 @@ uv run python pipeline/worker.py --local
 ## Environment Variables
 
 ```bash
-# Django
-SECRET_KEY=
-DEBUG=true
-ALLOWED_HOSTS=localhost,127.0.0.1
+# FastAPI
+JWT_SECRET_KEY=
+JWT_ALGORITHM=HS256
+
+# Database
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/moment_clone
 
 # Google Cloud
@@ -76,7 +85,7 @@ GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
 
 # Cloud Storage
 GCS_BUCKET=moment-clone-media
-GCS_COACHING_VIDEO_EXPIRY_DAYS=7
+GCS_SIGNED_URL_EXPIRY_DAYS=7
 
 # Pub/Sub
 PUBSUB_TOPIC=session-uploaded
@@ -98,103 +107,89 @@ TTS_LANGUAGE=ja-JP
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_ID_MONTHLY=
+
+# Frontend (set in frontend/.env.local)
+NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
 ## Project Structure
 
 ```
 moment-clone/
-├── manage.py
-├── pyproject.toml
-├── .env.example
+├── backend/                    # FastAPI application
+│   ├── main.py                 # App factory, router registration
+│   ├── core/
+│   │   ├── config.py           # Pydantic settings
+│   │   ├── database.py         # SQLModel engine + session
+│   │   └── auth.py             # JWT logic
+│   ├── models/                 # SQLModel table models
+│   │   ├── user.py
+│   │   ├── dish.py
+│   │   ├── session.py
+│   │   ├── learner_state.py
+│   │   └── chat.py
+│   ├── routers/                # FastAPI route handlers
+│   │   ├── auth.py
+│   │   ├── dishes.py
+│   │   ├── sessions.py
+│   │   └── chat.py
+│   └── services/               # GCS, Pub/Sub, Stripe clients
 │
-├── config/                     # Django project settings
-│   ├── settings/
-│   │   ├── base.py
-│   │   ├── local.py
-│   │   └── production.py
-│   ├── urls.py
-│   └── wsgi.py
+├── frontend/                   # Next.js PWA (App Router)
+│   ├── app/
+│   ├── components/
+│   └── lib/                    # API client, auth helpers
 │
-├── apps/
-│   ├── users/                  # User auth, onboarding, learner state
-│   ├── dishes/                 # Dish catalogue, progression
-│   ├── sessions/               # Cooking sessions, video upload, AI output
-│   └── chat/                   # Chat rooms and messages
-│
-├── pipeline/                   # AI pipeline (Cloud Run Job)
+├── pipeline/                   # AI pipeline (Cloud Run Jobs)
 │   ├── worker.py               # Entrypoint — receives Pub/Sub message
-│   ├── stages/
-│   │   ├── video_analysis.py   # Stage 1: Gemini video analysis (CHEF-VL pattern)
-│   │   ├── rag.py              # Stage 2: Vertex AI Vector Search
-│   │   ├── coaching_script.py  # Stage 3: Gemini coaching text + narration script
-│   │   └── video_production.py # Stage 4: Cloud TTS + FFmpeg composition
-│   └── prompts/
-│       ├── video_analysis.py
-│       ├── coaching_script.py
-│       └── system.py
+│   └── stages/
+│       ├── voice_memo.py       # Stage 0: STT + entity extraction
+│       ├── video_analysis.py   # Stage 1: Gemini CoVT
+│       ├── rag.py              # Stage 2: Vertex AI Vector Search
+│       ├── coaching_script.py  # Stage 3: coaching text + narration script
+│       └── video_production.py # Stage 4: Cloud TTS + FFmpeg
 │
 ├── knowledge_base/             # Cooking principles for RAG
-│   ├── principles/             # Markdown files per principle
-│   └── ingest.py               # Script to embed and upload to Vector Search
+│   ├── principles/
+│   └── ingest.py
 │
-├── templates/                  # Django HTML templates
-│   ├── base.html
-│   ├── dashboard/
-│   ├── sessions/
-│   └── chat/
-│
-├── static/                     # CSS, JS, static assets
-│   └── audio/
-│       └── outro.mp3           # Coaching video outro music
+├── alembic/                    # Database migrations
+│   └── versions/
 │
 ├── terraform/                  # GCP infrastructure
-│   ├── main.tf
-│   ├── variables.tf
-│   └── modules/
-│       ├── cloud_run/
-│       ├── cloud_sql/
-│       ├── pubsub/
-│       └── storage/
-│
 └── docs/                       # Project documentation
-    ├── architecture.md
-    ├── design.md
-    ├── product.md
-    ├── ai_feasibility.md
-    └── principal_engineers_analysis.md
 ```
 
 ## Running Tests
 
 ```bash
-# All tests
+# All backend tests
 uv run pytest
 
-# With coverage
-uv run pytest --cov=apps --cov=pipeline
+# Specific module
+uv run pytest backend/
+uv run pytest pipeline/
 
-# Specific app
-uv run pytest apps/sessions/
-
-# Pipeline stages (requires GEMINI_API_KEY)
+# Pipeline integration tests (requires GEMINI_API_KEY)
 uv run pytest pipeline/ -m integration
 ```
 
 ## Code Quality
 
 ```bash
-# Format and lint
+# Backend (Python)
 uv run ruff format .
 uv run ruff check .
-
-# Type checking
 uv run mypy .
+
+# Frontend (TypeScript)
+bunx biome check --write .
 ```
 
 ## AI Pipeline
 
 The coaching pipeline runs asynchronously as a Cloud Run Job triggered by Pub/Sub.
+Coaching text is delivered first (~2–3 min), video follows (~5–10 min).
 
 ```
 User uploads video
@@ -202,13 +197,14 @@ User uploads video
     → video stored in GCS
     → Pub/Sub message published
     → Cloud Run Job triggered
-    → Stage 1: Video analysis (Gemini, CHEF-VL dual-agent pattern)
+    → Stage 0: Voice memo STT + entity extraction (optional)
+    → Stage 1: Video analysis (Gemini CoVT — single-agent)
     → Stage 2: RAG retrieval (Vertex AI Vector Search)
-    → Stage 3: Coaching script generation (Gemini)
+    → Stage 3a: Coaching text generation → delivered to chat (~2–3 min)
+    → Stage 3b: Narration script generation
     → Stage 4: TTS + FFmpeg video composition
     → coaching_video.mp4 uploaded to GCS
-    → Session updated → Messages posted to chat rooms
-    → User notified by email
+    → Coaching video delivered to chat (~5–10 min)
 ```
 
 See [`docs/design.md`](docs/design.md) for the full pipeline specification.
@@ -216,23 +212,26 @@ See [`docs/design.md`](docs/design.md) for the full pipeline specification.
 ## Deployment
 
 ```bash
-# Build and push container
-gcloud builds submit --tag gcr.io/$PROJECT_ID/moment-clone
+# Backend: build and push container
+gcloud builds submit --tag gcr.io/$PROJECT_ID/moment-clone-backend ./backend
 
 # Apply infrastructure
 cd terraform && terraform apply
 
-# Deploy Django app
-gcloud run deploy moment-clone \
-  --image gcr.io/$PROJECT_ID/moment-clone \
+# Deploy FastAPI backend
+gcloud run deploy moment-clone-backend \
+  --image gcr.io/$PROJECT_ID/moment-clone-backend \
   --region us-central1 \
   --set-env-vars-file .env.production
 
 # Deploy pipeline worker
 gcloud run jobs deploy pipeline-worker \
-  --image gcr.io/$PROJECT_ID/moment-clone \
+  --image gcr.io/$PROJECT_ID/moment-clone-backend \
   --region us-central1 \
   --command python,pipeline/worker.py
+
+# Frontend: deploy to Vercel
+cd frontend && vercel --prod
 ```
 
 ## Documentation

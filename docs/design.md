@@ -4,36 +4,41 @@
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Platform | Web first (Django templates) | Fastest iteration; no app store; mobile later |
+| Platform | Next.js PWA (Vercel) + FastAPI (Cloud Run) | No native app needed; PWA handles upload, mic, push notifications; no App Store friction |
 | Coaching output | Full coaching video (TTS + FFmpeg) | This IS the product — text-only devalues the core experience |
 | Camera input | Manual video upload | Decouples AI pipeline validation from camera complexity |
 | Chat rooms | Cooking Videos + Coaching only | Core loop only; Help chat deferred |
 | Language | Japanese (ja-JP) | Primary market; single locale simplifies prompts and TTS |
+| Feedback delivery | Tiered — text first (~2–3 min), video follows (~5–10 min) | Users don't wait for video encoding to read diagnosis |
+| Feedback latency target | < 5 minutes to coaching text | vs Moment's 2-day wait — core differentiator |
+| Onboarding | 40-question quiz for now | Video-based onboarding under discussion; deferred |
+| Gemini Live | Post-PMF feature | Real-time companion mode; requires stable coaching loop first |
 
 ---
 
 ## System Components
 
 ```
-Browser (Django templates + HTMX)
-    ↓ multipart upload
-Django + DRF (Cloud Run)
+Next.js PWA (Vercel)
+    ↓ REST + JWT
+FastAPI (Cloud Run)
     ↓ store raw video
 Cloud Storage
     ↓ publish event
 Pub/Sub
     ↓ trigger
 AI Pipeline (Cloud Run Job)
-    ├── Stage 1: Video Analysis Agent    (Gemini 3 Flash (`gemini-3-flash`))
+    ├── Stage 0: Voice Memo STT + extraction (optional)
+    ├── Stage 1: Video Analysis (Gemini 3 Flash CoVT)
     ├── Stage 2: RAG Agent               (Vertex AI Vector Search)
-    ├── Stage 3: Coaching Script Agent   (Gemini 3 Flash (`gemini-3-flash`))
+    ├── Stage 3a: Coaching Text          → delivered to chat (~2–3 min)
+    ├── Stage 3b: Narration Script       (Gemini 3 Flash)
     └── Stage 4: Video Production        (Cloud TTS + FFmpeg)
          ↓ upload coaching_video.mp4
-Cloud Storage → signed URL
+Cloud Storage → GCS path → signed URL at read time
     ↓ write result
 Cloud SQL (PostgreSQL)
-    ↓ notify user
-(email notification in MVP, FCM later)
+    ↓ coaching video delivered to chat (~5–10 min)
 ```
 
 ---
@@ -42,200 +47,167 @@ Cloud SQL (PostgreSQL)
 
 ### User
 ```python
-class User(AbstractUser):
-    first_name       = CharField(max_length=100)
-    email            = EmailField(unique=True)
-    onboarding_done  = BooleanField(default=False)
-    subscription_status = CharField(
-                         choices=["free", "active", "past_due", "cancelled"],
-                         default="free"
-                       )  # enforced at session creation: free users get 1 session only
-    learner_profile  = JSONField(default=dict)
+class User(SQLModel, table=True):
+    id:                   Optional[int] = Field(default=None, primary_key=True)
+    email:                str = Field(unique=True, index=True)
+    hashed_password:      str
+    first_name:           str = Field(max_length=100)
+    onboarding_done:      bool = Field(default=False)
+    subscription_status:  str = Field(default="free")
+    # choices: "free" | "active" | "past_due" | "cancelled"
+    # enforced at session creation: free users get 1 trial session only
+    learner_profile:      dict = Field(default_factory=dict, sa_column=Column(JSON))
     # {
     #   "cooking_experience_years": 5,
     #   "self_rated_level": "beginner",
     #   "goals": ["cook_without_recipes", "impress_family"],
     #   "dietary": []
     # }
-    created_at       = DateTimeField(auto_now_add=True)
+    created_at:           datetime = Field(default_factory=datetime.utcnow)
 ```
 
 ### Dish
 ```python
-class Dish(Model):
-    slug             = SlugField(unique=True)   # "fried-rice", "beef-steak", "pomodoro"
-    name_ja          = CharField(max_length=100) # "チャーハン"
-    name_en          = CharField(max_length=100)
-    description_ja   = TextField()
-    principles       = JSONField()
-    # [
-    #   "moisture_control",
-    #   "heat_management",
-    #   "oil_coating"
-    # ]
-    transferable_to  = JSONField()              # ["minestrone", "ratatouille"]
-    month_unlocked   = IntegerField(default=1)  # 1 = starter dishes
-    order            = IntegerField()
+class Dish(SQLModel, table=True):
+    id:              Optional[int] = Field(default=None, primary_key=True)
+    slug:            str = Field(unique=True, index=True)  # "fried-rice", "beef-steak", "pomodoro"
+    name_ja:         str = Field(max_length=100)           # "チャーハン"
+    name_en:         str = Field(max_length=100)
+    description_ja:  str
+    principles:      list = Field(default_factory=list, sa_column=Column(JSON))
+    # ["moisture_control", "heat_management", "oil_coating"]
+    transferable_to: list = Field(default_factory=list, sa_column=Column(JSON))
+    # ["minestrone", "ratatouille"]
+    month_unlocked:  int = Field(default=1)                # 1 = starter dishes
+    order:           int
 ```
 
 ### UserDishProgress
 ```python
-class UserDishProgress(Model):
-    user             = ForeignKey(User)
-    dish             = ForeignKey(Dish)
-    status           = CharField(choices=[
-                         "not_started", "in_progress", "completed"
-                       ])
-    started_at       = DateTimeField(null=True)
-    completed_at     = DateTimeField(null=True)
+class UserDishProgress(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("user_id", "dish_id"),)
 
-    class Meta:
-        unique_together = [("user", "dish")]
+    id:           Optional[int] = Field(default=None, primary_key=True)
+    user_id:      int = Field(foreign_key="user.id", index=True)
+    dish_id:      int = Field(foreign_key="dish.id")
+    status:       str = Field(default="not_started")
+    # choices: "not_started" | "in_progress" | "completed"
+    started_at:   Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 ```
 
 ### Session
 ```python
-class Session(Model):
+class Session(SQLModel, table=True):
     """One cook of one dish = one session. Max 3 per dish."""
-    user             = ForeignKey(User)
-    dish             = ForeignKey(Dish)
-    session_number   = IntegerField()           # 1, 2, or 3
+    __table_args__ = (
+        UniqueConstraint("user_id", "dish_id", "session_number"),
+        CheckConstraint("session_number IN (1, 2, 3)", name="session_number_1_to_3"),
+    )
+
+    id:              Optional[int] = Field(default=None, primary_key=True)
+    user_id:         int = Field(foreign_key="user.id", index=True)
+    dish_id:         int = Field(foreign_key="dish.id")
+    session_number:  int                                # 1, 2, or 3
 
     # User input
-    raw_video_url    = URLField(blank=True)     # GCS path — blank until upload completes
-    voice_memo_url   = URLField(null=True, blank=True)  # GCS path to user's voice self-assessment
-    self_ratings     = JSONField(default=dict)
-    # {
-    #   "appearance": 3,  "taste": 4,
-    #   "texture": 2,     "aroma": 3
-    # }
-    voice_transcript = TextField(blank=True)    # STT output of voice memo
-    structured_input = JSONField(default=dict)  # entity-extracted from voice transcript
-    # {
-    #   "identified_issues": ["oiliness", "moisture"],
-    #   "questions": ["rice_addition_timing"],
-    #   "emotional_state": "uncertain_but_engaged"
-    # }
+    raw_video_url:       str = Field(default="")        # GCS path — blank until upload completes
+    voice_memo_url:      Optional[str] = None           # GCS path to user's voice self-assessment
+    self_ratings:        dict = Field(default_factory=dict, sa_column=Column(JSON))
+    # { "appearance": 3, "taste": 4, "texture": 2, "aroma": 3 }
+    voice_transcript:    str = Field(default="")        # STT output of voice memo
+    structured_input:    dict = Field(default_factory=dict, sa_column=Column(JSON))
+    # { "identified_issues": [...], "questions": [...], "emotional_state": "..." }
 
     # Pipeline state
-    status           = CharField(choices=[
-                         "uploaded",       # video received
-                         "processing",     # pipeline running
-                         "completed",      # coaching ready
-                         "failed"          # pipeline error
-                       ], default="uploaded")
-    pipeline_job_id  = UUIDField(null=True, blank=True)  # idempotency key; set on job start
-    pipeline_started_at = DateTimeField(null=True)
-    pipeline_error   = TextField(blank=True)
+    status:              str = Field(default="uploaded")
+    # "uploaded" | "processing" | "text_ready" | "completed" | "failed"
+    pipeline_job_id:     Optional[UUID] = Field(default=None)  # idempotency key
+    pipeline_started_at: Optional[datetime] = None
+    pipeline_error:      str = Field(default="")
 
     # AI analysis output (Stage 1)
-    video_analysis   = JSONField(default=dict)
+    video_analysis:      dict = Field(default_factory=dict, sa_column=Column(JSON))
     # {
-    #   "cooking_events": [
-    #     { "t": "0:23", "event": "egg_added", "state": "pan_temp: too_high" },
-    #     { "t": "0:41", "event": "rice_added", "state": "egg: fully_cooked — ERROR" }
-    #   ],
+    #   "cooking_events": [{ "t": "0:23", "event": "egg_added", "state": "pan_temp: too_high" }],
     #   "key_moment_timestamp": "0:41",
     #   "key_moment_seconds": 41,
     #   "diagnosis": "egg fully cooked before rice causes clumping"
     # }
 
-    # Coaching output (Stage 3)
-    coaching_text    = JSONField(default=dict)
-    # {
-    #   "mondaiten":   "Oil was insufficient...",
-    #   "skill":       "Moisture evaporation is the basis of all cooking...",
-    #   "next_action": "Increase oil to double the current amount",
-    #   "success_sign": "パチパチ sound + rice looks shiny and loose"
-    # }
-    narration_script = JSONField(default=dict)
-    # {
-    #   "part1": "今回はチャーハン作りの第1回セッションです...",
-    #   "pivot": "動画を使ってそのポイントを見てみましょう",
-    #   "part2": "熱したフライパンで解いた卵を加えます..."
-    # }
+    # Coaching output (Stage 3a — text delivered first)
+    coaching_text:       dict = Field(default_factory=dict, sa_column=Column(JSON))
+    # { "mondaiten": "...", "skill": "...", "next_action": "...", "success_sign": "..." }
+    coaching_text_delivered_at: Optional[datetime] = None
+
+    # Narration script (Stage 3b — for video production)
+    narration_script:    dict = Field(default_factory=dict, sa_column=Column(JSON))
+    # { "part1": "...", "pivot": "動画を使ってそのポイントを見てみましょう", "part2": "..." }
 
     # Video output (Stage 4)
-    # Store the immutable GCS object path; generate signed URL at read time in the serializer.
-    # This avoids stale URLs in chat history when the 7-day expiry passes.
-    coaching_video_gcs_path = CharField(max_length=500, blank=True)  # e.g. "sessions/42/coaching_video.mp4"
+    # Store immutable GCS object path; signed URL generated at read time in the API response.
+    coaching_video_gcs_path: str = Field(default="")   # e.g. "sessions/42/coaching_video.mp4"
 
-    created_at       = DateTimeField(auto_now_add=True)
-    updated_at       = DateTimeField(auto_now=True)
-
-    class Meta:
-        unique_together = [("user", "dish", "session_number")]
-        constraints = [
-            models.CheckConstraint(
-                check=models.Q(session_number__in=[1, 2, 3]),
-                name="session_number_1_to_3",
-            )
-        ]
+    created_at:          datetime = Field(default_factory=datetime.utcnow)
+    updated_at:          datetime = Field(default_factory=datetime.utcnow)
 ```
 
 ### LearnerState
 ```python
-class LearnerState(Model):
+class LearnerState(SQLModel, table=True):
     """Longitudinal learning model. One per user. Updated after each session."""
-    user                  = OneToOneField(User)
+    id:                  Optional[int] = Field(default=None, primary_key=True)
+    user_id:             int = Field(foreign_key="user.id", unique=True, index=True)
 
-    skills_acquired       = JSONField(default=list)
+    skills_acquired:     list = Field(default_factory=list, sa_column=Column(JSON))
     # ["moisture_control"]
 
-    skills_developing     = JSONField(default=list)
+    skills_developing:   list = Field(default_factory=list, sa_column=Column(JSON))
     # ["heat_management", "oil_coating"]
 
-    recurring_mistakes    = JSONField(default=list)
+    recurring_mistakes:  list = Field(default_factory=list, sa_column=Column(JSON))
     # [{ "mistake": "over_cook_egg_before_combining", "seen_count": 2 }]
 
-    learning_velocity     = CharField(choices=[
-                              "fast", "steady", "slow", "plateau"
-                            ], default="steady")
+    learning_velocity:   str = Field(default="steady")
+    # choices: "fast" | "steady" | "slow" | "plateau"
 
-    session_summaries     = JSONField(default=list)
+    session_summaries:   list = Field(default_factory=list, sa_column=Column(JSON))
     # [{ "dish": "fried-rice", "session": 1, "key_issue": "...", "key_progress": "..." }]
 
-    next_focus            = CharField(max_length=200, blank=True)
-    ready_for_next_dish   = BooleanField(default=False)
+    next_focus:          str = Field(default="", max_length=200)
+    ready_for_next_dish: bool = Field(default=False)
 
-    updated_at            = DateTimeField(auto_now=True)
+    updated_at:          datetime = Field(default_factory=datetime.utcnow)
 ```
 
 ### ChatRoom
 ```python
-class ChatRoom(Model):
-    ROOM_TYPES = [
-        ("cooking_videos", "Cooking Videos"),
-        ("coaching",       "My Coaching"),
-    ]
-    user             = ForeignKey(User)
-    room_type        = CharField(choices=ROOM_TYPES)
-    created_at       = DateTimeField(auto_now_add=True)
+class ChatRoom(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("user_id", "room_type"),)
 
-    class Meta:
-        unique_together = [("user", "room_type")]
+    id:         Optional[int] = Field(default=None, primary_key=True)
+    user_id:    int = Field(foreign_key="user.id", index=True)
+    room_type:  str
+    # choices: "cooking_videos" | "coaching"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 ```
 
 ### Message
 ```python
-class Message(Model):
-    SENDER_CHOICES = [("user", "User"), ("ai", "AI"), ("system", "System")]
+class Message(SQLModel, table=True):
+    id:           Optional[int] = Field(default=None, primary_key=True)
+    chat_room_id: int = Field(foreign_key="chatroom.id", index=True)
+    sender:       str
+    # choices: "user" | "ai" | "system"
+    session_id:   Optional[int] = Field(default=None, foreign_key="session.id")
 
-    chat_room        = ForeignKey(ChatRoom, related_name="messages")
-    sender           = CharField(choices=SENDER_CHOICES)
-    session          = ForeignKey(Session, null=True, blank=True)
-                       # link to the session this message is about
+    # Content — exactly one of text/video_gcs_path is populated per message
+    text:             str = Field(default="")
+    video_gcs_path:   str = Field(default="")  # signed URL generated at read time
+    metadata:         dict = Field(default_factory=dict, sa_column=Column(JSON))
+    # { "type": "coaching_ready" | "coaching_video" | "cooking_video", "session_id": 42 }
 
-    # Content (one of these is populated)
-    text             = TextField(blank=True)
-    video_url        = URLField(blank=True)   # for coaching video delivery
-    metadata         = JSONField(default=dict)
-    # For system messages:
-    # { "type": "coaching_ready", "session_id": 42 }
-    # For video messages:
-    # { "type": "cooking_video", "session_id": 42, "thumbnail_url": "..." }
-
-    created_at       = DateTimeField(auto_now_add=True)
+    created_at:   datetime = Field(default_factory=datetime.utcnow)
 ```
 
 ---
@@ -360,11 +332,12 @@ Also retrieve: relevant past session summaries from learner_state
 
 ---
 
-### Stage 3 — Coaching Script Agent
+### Stage 3a — Coaching Text Agent (delivered immediately)
 
 **Input**: video_analysis, retrieved_context, learner_state, session.structured_input,
           session.session_number, user.first_name
 **Model**: Gemini 3 Flash (`gemini-3-flash`)
+**Delivery**: Immediately after this stage — creates coaching text Message in chat (~2–3 min)
 
 ```
 System prompt:
@@ -375,15 +348,32 @@ System prompt:
   You address the user by first name with さん.
   Sentence endings should feel natural and warm (ましょう、ですね、ください).
 
-Output A — coaching_text (structured JSON):
+Output — coaching_text (structured JSON):
   {
-    "mondaiten":   "今回の最も重要な改善点",
-    "skill":       "このセッションで身につける原理原則",
-    "next_action": "次回試す具体的な1つのアクション",
+    "mondaiten":    "今回の最も重要な改善点",
+    "skill":        "このセッションで身につける原理原則",
+    "next_action":  "次回試す具体的な1つのアクション",
     "success_sign": "成功を判断できる感覚的なサイン"
   }
+```
 
-Output B — narration_script (2-part):
+After Stage 3a completes:
+  - Persist `session.coaching_text`
+  - Set `session.status = "text_ready"`
+  - Create Message in Coaching room (formatted text, sender="ai")
+  - User can read coaching while video is still being produced
+
+**Output**: `session.coaching_text`, `session.status = "text_ready"`
+
+---
+
+### Stage 3b — Narration Script Agent
+
+**Input**: coaching_text, video_analysis, user.first_name
+**Model**: Gemini 3 Flash (`gemini-3-flash`)
+
+```
+Output — narration_script (2-part, feeds Stage 4):
   {
     "part1": "intro + principle + diagnosis (30-40 seconds of narration)",
     "pivot": "動画を使ってそのポイントを見てみましょう",
@@ -394,7 +384,7 @@ Output B — narration_script (2-part):
                         and end with the decisive rule
 ```
 
-**Output**: `session.coaching_text`, `session.narration_script`
+**Output**: `session.narration_script`
 
 ---
 
@@ -511,18 +501,62 @@ and prompts the user to complete their first session.
 
 ---
 
-## Web UI Pages
+## Web UI Pages (Next.js App Router)
 
 ```
-/                        Landing page
-/onboarding/             ~40-question learner profile quiz
-/dashboard/              Dish selection + progress overview
-/dishes/{slug}/          Dish detail + session history
-/sessions/new/{slug}/    Upload flow (video upload + voice memo + self-ratings)
-/chat/cooking-videos/    Cooking Videos chat room
-/chat/coaching/          Coaching chat room (+ follow-up Q&A input)
-/sessions/{id}/          Session detail (video analysis + coaching)
+app/
+├── page.tsx                          /          Landing page
+├── onboarding/page.tsx               /onboarding   ~40-question learner profile quiz
+├── dashboard/page.tsx                /dashboard    Dish selection + progress overview
+├── dishes/[slug]/page.tsx            /dishes/:slug Dish detail + session history
+├── sessions/new/[slug]/page.tsx      /sessions/new/:slug  Upload flow
+│                                                   (video upload + voice memo + ratings)
+├── sessions/[id]/page.tsx            /sessions/:id Session detail + coaching output
+└── chat/
+    ├── cooking-videos/page.tsx       /chat/cooking-videos  Cooking Videos room
+    └── coaching/page.tsx             /chat/coaching        Coaching room + Q&A input
 ```
+
+PWA manifest configured for "Add to Home Screen" install on iOS/Android.
+Push notifications via Web Push API (service worker).
+
+---
+
+## Gemini Live Companion Mode (Post-PMF Feature)
+
+Real-time cooking guidance via Gemini Live API. **Not in MVP — build after core loop is validated.**
+
+### What it does
+
+Phone mounted overhead during cooking. User opens `/companion` in browser.
+Gemini watches the live video stream and speaks real-time coaching via audio output.
+
+```
+User: opens /companion in browser, presses Start
+  → getUserMedia() opens camera + microphone
+  → WebRTC stream → FastAPI WebSocket endpoint
+  → FastAPI streams frames to Gemini Live API
+  → Gemini detects key moments: "Your oil is ready — add the egg now"
+  → Audio response streamed back → played in browser
+```
+
+### Architecture
+
+```
+Next.js /companion page
+    ↓ WebSocket
+FastAPI /ws/companion/{session_id}
+    ↓ Gemini Live API (bidirectional stream)
+    ↓ audio output
+Browser (speaker)
+```
+
+### Design constraints
+- Separate from the coaching loop — companion is for practice, coaching is for reflection
+- No data written to Session model during companion mode (different product mode)
+- Requires stable connection; degraded gracefully if connection drops
+- Kitchen noise / steam handled by Gemini Live's multimodal robustness
+- Privacy note: live video is streamed but not stored
 
 ---
 
@@ -530,33 +564,37 @@ and prompts the user to complete their first session.
 
 | Layer | Technology |
 |---|---|
-| Backend framework | Django 5.x + Django REST Framework |
-| Frontend | Django templates + HTMX (no SPA) |
+| Frontend | Next.js (PWA, App Router, deployed on Vercel) |
+| Backend API | Python / FastAPI |
+| ORM + Migrations | SQLModel + Alembic |
 | Database | Cloud SQL (PostgreSQL 16) |
 | File storage | Google Cloud Storage |
 | Async events | Pub/Sub |
 | AI pipeline runner | Cloud Run Jobs |
-| Video analysis | Gemini 3 Flash (`gemini-3-flash`) (video input) |
+| Video analysis | Gemini 3 Flash (`gemini-3-flash`, CoVT pattern) |
 | Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) |
 | Vector search | Vertex AI Vector Search |
 | TTS | Google Cloud TTS (Neural2 ja-JP) |
 | Video composition | FFmpeg (in Cloud Run Job container) |
-| Auth | Django sessions (web), JWT later for mobile |
+| Auth | JWT (python-jose) |
 | Payments | Stripe (subscriptions) |
-| Hosting | Cloud Run (Django app) |
+| Frontend hosting | Vercel |
+| Backend hosting | Cloud Run (FastAPI) |
 | IaC | Terraform |
-| CI/CD | Cloud Build |
-| Package manager | uv |
-| Linter/formatter | ruff |
+| CI/CD | Cloud Build (backend) + Vercel CI (frontend) |
+| Python package manager | uv |
+| Python linter/formatter | ruff |
+| Frontend package manager | bun |
+| Frontend linter/formatter | Biome |
 
 ---
 
 ## Development Sequence
 
 ### Phase 1 — Backend Foundation
-1. Django project scaffold (uv, ruff, Cloud SQL)
-2. User auth + onboarding quiz
-3. Dish + Session models + migrations
+1. FastAPI project scaffold (uv, ruff, SQLModel, Alembic)
+2. User auth (JWT: register, login, `/me`)
+3. Dish + Session + LearnerState models + Alembic migrations
 4. Video upload endpoint → GCS
 5. Pub/Sub publisher on upload
 
@@ -564,25 +602,27 @@ and prompts the user to complete their first session.
 6. Cloud Run Job scaffold (pipeline entrypoint + idempotency guard)
 7. Stage 0: Voice memo STT + entity extraction (optional pre-stage)
 8. Stage 1: Video Analysis Agent (Gemini CoVT)
-9. Stage 2: RAG Agent (Vertex AI Vector Search + knowledge base)
-10. Stage 3: Coaching Script Agent (Gemini)
-11. Stage 4: TTS + FFmpeg video composition → GCS path storage
-12. Pub/Sub → pipeline trigger wiring
+9. Stage 2: RAG Agent (Vertex AI Vector Search + knowledge base ingest)
+10. Stage 3a: Coaching text → deliver to chat immediately (`text_ready`)
+11. Stage 3b: Narration script generation
+12. Stage 4: TTS + FFmpeg video composition → GCS path
+13. Pub/Sub → pipeline trigger wiring
 
-### Phase 3 — Chat + Delivery
-12. ChatRoom + Message models
-13. Auto-message creation after pipeline completes
-14. Coaching chat room UI (message list + Q&A input)
-15. Cooking Videos chat room UI
+### Phase 3 — Frontend (Next.js)
+14. Next.js scaffold (App Router, Biome, bun, Vercel deploy)
+15. Auth flow (login, register, JWT storage)
+16. Onboarding quiz page
+17. Dashboard + dish selection
+18. Session upload flow (video + voice memo + ratings)
+19. Chat rooms (Cooking Videos + Coaching, polling or SSE for new messages)
+20. PWA manifest + Web Push service worker
 
-### Phase 4 — Web UI
-16. Dashboard (dish selection + progress)
-17. Session upload flow UI
-18. Chat rooms UI (HTMX for real-time feel)
-19. Learner state display
+### Phase 4 — Polish + Payments
+21. Stripe subscription integration + entitlement guard
+22. Dish unlocking by month
+23. Pipeline progress indicator (SSE from FastAPI)
 
-### Phase 5 — Polish + Payments
-20. Stripe subscription integration
-21. Dish unlocking by month
-22. Email notifications (pipeline complete)
-23. Signed URL refresh logic
+### Phase 5 — Gemini Live
+24. `/companion` WebSocket endpoint (FastAPI)
+25. Gemini Live API integration (bidirectional stream)
+26. Companion mode UI (Next.js, getUserMedia)

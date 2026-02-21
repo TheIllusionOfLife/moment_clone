@@ -46,69 +46,60 @@
 └─────────────────────────────────────────────────────┘
 ```
 
-## Our Clone (GCP) Full Architecture
+## Our Clone (GCP + Vercel) Full Architecture
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Marketing LP: Nuxt.js + Firebase + Stripe          │
-└─────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────┐
-│  Web App: Django templates + HTMX  [MVP]            │
+│  Next.js PWA (Vercel)                    [MVP]      │
 │  Chat rooms: My Coaching / Cooking Videos           │
 │  Video upload (manual) + voice memo + self-ratings  │
-│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
-│  Mobile App: Flutter (iOS + Android)  [post-MVP]    │
-│  Chat rooms: My Coaching / Help / Cooking Videos    │
-│  + In-app camera for overhead cooking recording     │
-│  + Voice memo recording for self-assessment         │
+│  /companion: Gemini Live real-time mode  [post-PMF] │
 └──────────────────┬──────────────────────────────────┘
-                   │ REST API
+                   │ REST + JWT
 ┌──────────────────▼──────────────────────────────────┐
-│  Backend: Django + DRF (on Cloud Run)               │
-│  - Auth, user management, chat rooms                │
+│  Backend: FastAPI (Cloud Run)                       │
+│  - JWT auth, user management, chat rooms            │
 │  - Video upload → Cloud Storage                     │
 │  - Triggers Pub/Sub events                          │
-│  Cloud SQL (PostgreSQL)                             │
+│  - /ws/companion: WebSocket → Gemini Live [post-PMF]│
+│  Cloud SQL (PostgreSQL) + SQLModel + Alembic        │
 └──────────┬──────────────────────────────────────────┘
            │ Pub/Sub
 ┌──────────▼──────────────────────────────────────────┐
-│  AI Pipeline Workers (Cloud Run Jobs)               │
+│  AI Pipeline (Cloud Run Jobs)                       │
 │  ┌─────────────────────────────────────────────┐   │
-│  │ 1. Video Analysis Agent (Gemini 3 Flash (`gemini-3-flash`))    │   │
-│  │    - Analyze full timelapse video           │   │
-│  │    - Extract cooking events with timestamps │   │
-│  │    - Identify THE key moment timestamp      │   │
-│  │      (the clip to show in coaching video)   │   │
+│  │ 0. Voice Memo (optional)                    │   │
+│  │    - Google STT → voice_transcript          │   │
+│  │    - Gemini entity extraction → structured  │   │
+│  ├─────────────────────────────────────────────┤   │
+│  │ 1. Video Analysis (Gemini CoVT)             │   │
+│  │    - Single-agent Chain-of-Video-Thought    │   │
+│  │    - cooking_events + key_moment + diagnosis│   │
 │  ├─────────────────────────────────────────────┤   │
 │  │ 2. RAG Agent (Vertex AI Vector Search)      │   │
 │  │    - Retrieve relevant cooking principles   │   │
-│  │    - Retrieve user's past session context   │   │
+│  │    - Retrieve past session summaries        │   │
 │  ├─────────────────────────────────────────────┤   │
-│  │ 3. Coaching Script Agent (Gemini 3 Flash)   │   │
-│  │    - Learner state from PostgreSQL (Cloud SQL) │ │
-│  │    - Generates structured coaching text:    │   │
+│  │ 3a. Coaching Text (Gemini)                  │   │
+│  │    - Learner state from PostgreSQL          │   │
+│  │    - coaching_text JSON → delivered to chat │   │
 │  │      🍳 今回の問題点                          │   │
 │  │      🍳 身につけるべきスキル                   │   │
-│  │      次回試すこと                             │   │
-│  │      ✅ 成功のサイン                          │   │
-│  │    - Generates 2-part narration script:     │   │
-│  │      Part 1: principle + diagnosis          │   │
-│  │      [pivot: "動画を使って見てみましょう"]    │   │
-│  │      Part 2: narration synced to user clip  │   │
+│  │      次回試すこと / ✅ 成功のサイン            │   │
+│  │    ★ Text message posted to chat ~2–3 min  │   │
 │  ├─────────────────────────────────────────────┤   │
-│  │ 4. Video Production (FFmpeg + Cloud TTS)    │   │
-│  │    - TTS: Part 1 audio + Part 2 audio       │   │
+│  │ 3b. Narration Script (Gemini)               │   │
+│  │    - Part 1 + pivot + Part 2 JSON           │   │
+│  ├─────────────────────────────────────────────┤   │
+│  │ 4. Video Production (Cloud TTS + FFmpeg)    │   │
+│  │    - TTS: Part 1 + Part 2 audio             │   │
 │  │    - FFmpeg: extract ~15s clip at timestamp │   │
-│  │    - FFmpeg compose:                        │   │
-│  │        [intro: full timelapse + Part1 TTS]  │   │
-│  │        + [user clip + Part2 TTS]            │   │
-│  │        + [outro music]                      │   │
-│  │    - Upload final .mp4 → Cloud Storage      │   │
+│  │    - FFmpeg compose: timelapse+TTS1         │   │
+│  │        + user clip+TTS2 + outro             │   │
+│  │    - GCS path stored; signed URL at read    │   │
+│  │    ★ Video message posted to chat ~5–10 min │   │
 │  └─────────────────────────────────────────────┘   │
-│  coaching_text → Cloud SQL → chat message          │
-│  coaching_video.mp4 → GCS signed URL → chat        │
-│  FCM push notification → user                      │
+│  Web Push notification → user (service worker)     │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -175,27 +166,30 @@ at any time and the AI responds in context of their session.
 
 ## Stack Comparison
 
-| Layer | Moment (AWS) | Our Clone (GCP) |
+| Layer | Moment (AWS) | Our Clone (GCP + Vercel) |
 |---|---|---|
-| Marketing LP | Nuxt.js + Firebase + Stripe | Nuxt.js + Firebase + Stripe (same) |
-| Mobile App | iOS + Android native | Flutter (iOS + Android) |
-| Camera | Dedicated Cook Cam IoT device | Smartphone camera (overhead mount) |
-| API backend | Django + DRF on ECS | Django + DRF on Cloud Run |
+| Client | iOS + Android native app | Next.js PWA (Vercel) — no App Store needed |
+| Camera | Dedicated Cook Cam IoT device | Smartphone camera (overhead mount, native camera app) |
+| API backend | Django + DRF on ECS | FastAPI on Cloud Run |
+| ORM / Migrations | Django ORM | SQLModel + Alembic |
+| Auth | Django sessions | JWT (python-jose) |
 | Primary DB | PostgreSQL | Cloud SQL (PostgreSQL) |
 | Media storage | S3 | Cloud Storage |
 | Async event bus | SQS / SNS | Pub/Sub |
 | Pipeline workers | Lambda / ECS | Cloud Run Jobs |
-| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash`) (video) + cooking heuristics |
-| Key moment detection | Custom CV with timestamp output | Gemini 3 Flash (`gemini-3-flash`) timestamp extraction prompt |
-| Knowledge base | Pinecone (4yr proprietary chef data) | Vertex AI Vector Search + manual knowledge base |
-| Coaching LLM | Post-trained on chef coaching dataset | Gemini 3 Flash (`gemini-3-flash`) + RAG + structured learner state |
-| Learner state | PostgreSQL + custom | PostgreSQL (LearnerState ORM model) |
+| Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash`) CoVT — single agent |
+| Key moment detection | Custom CV with timestamp output | Extracted as part of CoVT prompt output |
+| Knowledge base | Pinecone (4yr proprietary chef data) | Vertex AI Vector Search + curated knowledge base |
+| Coaching LLM | Post-trained on chef coaching dataset | Gemini 3 Flash (`gemini-3-flash`) + RAG + learner state |
+| Learner state | PostgreSQL + custom | PostgreSQL (LearnerState SQLModel) |
+| Feedback latency | Up to 2 days (by design) | ~2–3 min (text) / ~5–10 min (video) |
+| Feedback delivery | Single delivery (video only) | Tiered: text first, video follows |
 | TTS (coaching audio) | Unknown | Google Cloud TTS (Neural2 ja-JP) |
 | Video composition | Unknown (FFmpeg likely) | FFmpeg on Cloud Run Jobs |
-| Coaching video hosting | moment.page (external) | GCS signed URL or Cloud Run page |
-| Chat room names | My Coaching / Help / Cooking Videos | Same |
+| Real-time coaching | None | Gemini Live companion mode (post-PMF) |
+| Chat room names | My Coaching / Help / Cooking Videos | My Coaching / Cooking Videos (Help: post-MVP) |
 | IaC | Terraform | Terraform |
-| CI/CD | Unknown | Cloud Build |
+| CI/CD | Unknown | Cloud Build (backend) + Vercel CI (frontend) |
 
 ## AI Agent Comparison
 
