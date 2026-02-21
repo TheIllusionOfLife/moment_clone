@@ -46,7 +46,10 @@ class Settings(BaseSettings):
 
     @property
     def ASYNC_DATABASE_URL(self) -> str:
-        return self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+        url = self.DATABASE_URL
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
     @property
     def cors_origins_list(self) -> list[str]:
