@@ -132,8 +132,8 @@ async def send_message(
             .order_by(col(CookingSession.created_at).desc())
         ).first()
         session_id = latest_session.id if latest_session else None
-        assert current_user.id is not None
-        assert room.id is not None
+        if current_user.id is None or room.id is None:
+            raise HTTPException(status_code=500, detail="Invalid user or room state")
         background_tasks.add_task(
             _generate_coaching_reply,
             session_id=session_id,
@@ -216,12 +216,15 @@ def _generate_coaching_reply(
                 f"会話履歴:\n{history_text}"
             )
             gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
-            response = gemini_client.models.generate_content(
-                model=settings.GEMINI_MODEL,
-                contents=user_text,
-                config=types.GenerateContentConfig(system_instruction=system_instruction),
-            )
-            reply = response.text or ""
+            try:
+                response = gemini_client.models.generate_content(
+                    model=settings.GEMINI_MODEL,
+                    contents=user_text,
+                    config=types.GenerateContentConfig(system_instruction=system_instruction),
+                )
+                reply = response.text or ""
+            except Exception:
+                reply = "申し訳ありません。一時的なエラーが発生しました。しばらくしてからもう一度お試しください。"
 
         ai_message = Message(
             chat_room_id=room_id,

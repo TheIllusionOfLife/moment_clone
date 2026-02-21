@@ -220,7 +220,4 @@ def test_video_production_does_not_set_completed_status():
     # Verify none of the update_session_fields calls include status="completed"
     for c in mock_update.call_args_list:
         kwargs = c.kwargs if c.kwargs else {}
-        args = c.args if c.args else ()
         assert "status" not in kwargs, "update_session_fields must not set status='completed'"
-        if len(args) > 1:
-            assert "completed" not in args

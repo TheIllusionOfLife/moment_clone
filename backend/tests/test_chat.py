@@ -136,7 +136,7 @@ def test_send_message_cooking_videos_room_no_ai_reply(
     engine,
     user,
     cooking_videos_room,
-    mocker,  # noqa: ARG001
+    mocker,
 ):
     """Posting to cooking_videos room must NOT trigger an AI reply."""
     mock_add_task = mocker.patch("fastapi.BackgroundTasks.add_task")

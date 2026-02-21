@@ -139,8 +139,11 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
                 existing = ls.recurring_mistakes or []
                 matched = next((m for m in existing if m.get("text") == diagnosis), None)
                 if matched:
-                    matched["count"] = matched.get("count", 1) + 1
-                    ls.recurring_mistakes = existing
+                    # Build a new list+dict so SQLAlchemy detects the mutation
+                    ls.recurring_mistakes = [
+                        {**m, "count": m.get("count", 1) + 1} if m is matched else m
+                        for m in existing
+                    ]
                 else:
                     ls.recurring_mistakes = existing + [{"text": diagnosis, "count": 1}]
 
@@ -177,7 +180,8 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
     # Post coaching text to coaching room
     with DBSession(get_engine()) as db:
         coaching_room = get_coaching_room(session.user_id, db)
-        assert coaching_room.id is not None
+        if coaching_room.id is None:
+            raise RuntimeError(f"Coaching room for user {session.user_id} has no ID")
         post_message(
             coaching_room.id,
             "ai",
@@ -189,7 +193,8 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
     # Post raw video path to cooking_videos room
     with DBSession(get_engine()) as db:
         videos_room = get_cooking_videos_room(session.user_id, db)
-        assert videos_room.id is not None
+        if videos_room.id is None:
+            raise RuntimeError(f"Cooking videos room for user {session.user_id} has no ID")
         post_message(
             videos_room.id,
             "system",

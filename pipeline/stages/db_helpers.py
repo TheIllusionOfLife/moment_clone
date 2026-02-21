@@ -7,8 +7,8 @@ transaction (e.g. coaching_script's LearnerState update).
 """
 
 import json
-import re
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session as DBSession
 from sqlmodel import select
 
@@ -22,12 +22,17 @@ from backend.models.session import CookingSession
 def _parse_json_response(text: str) -> dict:
     """Extract and parse the first JSON object from a Gemini response.
 
-    Handles markdown code fences and filler text before/after the JSON block.
+    Uses JSONDecoder.raw_decode to find the exact boundary of the first JSON
+    object, handling filler text before/after and nested objects correctly.
     """
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
+    start = text.find("{")
+    if start == -1:
         raise ValueError(f"No JSON object found in response: {text[:200]}")
-    return json.loads(match.group())
+    try:
+        result, _ = json.JSONDecoder().raw_decode(text, start)
+        return result  # type: ignore[no-any-return]
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse JSON from response: {text[:200]}") from e
 
 
 def get_session_with_dish(session_id: int) -> tuple[CookingSession, Dish]:
@@ -58,13 +63,22 @@ def update_session_fields(session_id: int, **kwargs: object) -> None:
 
 
 def get_or_create_learner_state(user_id: int, db: DBSession) -> LearnerState:
-    """Return the LearnerState for user_id, creating it if it doesn't exist."""
+    """Return the LearnerState for user_id, creating it if it doesn't exist.
+
+    Uses try/except IntegrityError to handle concurrent inserts safely.
+    """
     ls = db.exec(select(LearnerState).where(LearnerState.user_id == user_id)).first()
     if ls is None:
-        ls = LearnerState(user_id=user_id)
-        db.add(ls)
-        db.commit()
-        db.refresh(ls)
+        try:
+            ls = LearnerState(user_id=user_id)
+            db.add(ls)
+            db.commit()
+            db.refresh(ls)
+        except IntegrityError:
+            db.rollback()
+            ls = db.exec(select(LearnerState).where(LearnerState.user_id == user_id)).first()
+            if ls is None:
+                raise
     return ls
 
 

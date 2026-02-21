@@ -41,7 +41,9 @@ def run_voice_memo(session_id: int) -> dict:
             language_code="ja-JP",
         )
         response = stt_client.recognize(config=config, audio=audio)
-        transcript = " ".join(r.alternatives[0].transcript for r in response.results)
+        transcript = " ".join(
+            r.alternatives[0].transcript for r in response.results if r.alternatives
+        )
 
     # Gemini entity extraction
     gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)

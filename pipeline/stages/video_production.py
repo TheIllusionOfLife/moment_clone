@@ -1,7 +1,7 @@
 """Stage 4 — Video production.
 
 Downloads raw video from GCS, runs Cloud TTS for part1/part2 narration, extracts
-a 15-second key-moment clip with FFmpeg, composes the coaching video, uploads it
+a 30-second key-moment clip with FFmpeg, composes the coaching video, uploads it
 to GCS, and posts it to the user's coaching chat room.
 
 Does NOT set status='completed' — that is handled by the mark-completed step in
@@ -52,7 +52,11 @@ def _get_audio_duration(audio_path: str) -> float:
         capture_output=True,
         check=True,
     )
-    return float(_json.loads(probe.stdout)["format"]["duration"])
+    data = _json.loads(probe.stdout)
+    try:
+        return float(data["format"]["duration"])
+    except (KeyError, TypeError) as e:
+        raise RuntimeError(f"ffprobe returned unexpected output for {audio_path}: {data}") from e
 
 
 def _synthesize_tts(tts_client: texttospeech.TextToSpeechClient, text: str, out_path: str) -> None:
@@ -201,7 +205,8 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
     # Step 8: Post coaching video message to coaching chat room.
     with DBSession(get_engine()) as db:
         coaching_room = get_coaching_room(session.user_id, db)
-        assert coaching_room.id is not None
+        if coaching_room.id is None:
+            raise RuntimeError(f"Coaching room for user {session.user_id} has no ID")
         post_message(
             coaching_room.id,
             "ai",

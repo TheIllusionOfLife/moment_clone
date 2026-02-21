@@ -38,7 +38,8 @@ def run_rag(session_id: int) -> dict:
         model=settings.GEMINI_EMBEDDING_MODEL,
         contents=query_text,
     )
-    assert result.embeddings, "Gemini embed_content returned no embeddings"
+    if not result.embeddings:
+        raise ValueError("Gemini embed_content returned no embeddings")
     embedding = result.embeddings[0].values  # list of floats
 
     # pgvector similarity search — must use raw SQL (SQLite in tests mocks this)
