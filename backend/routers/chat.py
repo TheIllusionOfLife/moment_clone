@@ -171,9 +171,15 @@ def _generate_coaching_reply(
             .order_by(col(Message.created_at).desc())
             .limit(10)
         ).all()
+        # Reverse to chronological order; drop the most recent user message since
+        # it is passed as `contents=user_text` to Gemini — including it in history
+        # would duplicate it in the prompt context.
+        history_messages = list(reversed(history))
+        if history_messages and history_messages[-1].sender == "user":
+            history_messages = history_messages[:-1]
         history_text = "\n".join(
             f"{'ユーザー' if m.sender == 'user' else 'コーチ'}: {m.text}"
-            for m in reversed(history)
+            for m in history_messages
             if m.text
         )
 

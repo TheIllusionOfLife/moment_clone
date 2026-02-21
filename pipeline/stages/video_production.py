@@ -109,7 +109,12 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
 
         # Step 3: Extract 30-second clip at key_moment_seconds, normalised to 1280x720.
         # Scale + pad ensures the final concat demuxer receives identical stream params.
-        key_moment = (session.video_analysis or {}).get("key_moment_seconds", 0)
+        try:
+            key_moment = max(
+                0.0, float((session.video_analysis or {}).get("key_moment_seconds", 0) or 0)
+            )
+        except (TypeError, ValueError):
+            key_moment = 0.0
         _run_ffmpeg(
             [
                 "-ss",

@@ -36,6 +36,11 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
         print(f"ERROR: cooking-pipeline received invalid session_id: {session_id!r}")
         return
 
+    user_id = ctx.event.data.get("user_id")
+    if not isinstance(user_id, int):
+        print(f"ERROR: cooking-pipeline received invalid user_id: {user_id!r}")
+        return
+
     # Idempotency guard: use SELECT FOR UPDATE to prevent concurrent invocations
     # from both proceeding past this check for the same session.
     def _check_and_set_processing() -> bool:

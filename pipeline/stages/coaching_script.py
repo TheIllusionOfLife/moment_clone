@@ -94,7 +94,30 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
     """
     session, dish = get_session_with_dish(session_id)
 
-    # SELECT FOR UPDATE on LearnerState for concurrency safety
+    # Step 1: Short read-only snapshot of LearnerState for prompt building.
+    # No lock here — we hold the lock only during the write below.
+    with DBSession(get_engine()) as db:
+        ls_snapshot = db.exec(
+            select(LearnerState).where(LearnerState.user_id == session.user_id)
+        ).first()
+        if ls_snapshot is None:
+            ls_snapshot = LearnerState(user_id=session.user_id)
+
+    # Step 2: Build prompt and call Gemini — entirely outside any DB transaction.
+    prompt = _build_prompt(session, dish, retrieved_context, ls_snapshot)
+    gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    response = gemini_client.models.generate_content(
+        model=settings.GEMINI_MODEL,
+        contents=prompt,
+    )
+    coaching_text = _parse_json_response(response.text or "")
+
+    # Validate required keys
+    missing = [k for k in _REQUIRED_KEYS if k not in coaching_text]
+    if missing:
+        raise ValueError(f"Gemini response missing required keys: {missing}")
+
+    # Step 3: Re-acquire SELECT FOR UPDATE to safely write LearnerState.
     with DBSession(get_engine()) as db:
         ls = db.exec(
             select(LearnerState).where(LearnerState.user_id == session.user_id).with_for_update()
@@ -104,22 +127,6 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
             db.add(ls)
             db.flush()
 
-        prompt = _build_prompt(session, dish, retrieved_context, ls)
-
-        # Call Gemini
-        gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        response = gemini_client.models.generate_content(
-            model=settings.GEMINI_MODEL,
-            contents=prompt,
-        )
-        coaching_text = _parse_json_response(response.text or "")
-
-        # Validate required keys
-        missing = [k for k in _REQUIRED_KEYS if k not in coaching_text]
-        if missing:
-            raise ValueError(f"Gemini response missing required keys: {missing}")
-
-        # Update LearnerState — still in the SELECT FOR UPDATE block
         diagnosis = (session.video_analysis or {}).get("diagnosis", "")
 
         # Append session summary — guard against double-append on Inngest retry

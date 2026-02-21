@@ -36,8 +36,10 @@ def run_video_analysis(session_id: int) -> dict:
         gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
         uploaded_file = gemini_client.files.upload(tmp_video_path)  # type: ignore[misc]
 
-    assert uploaded_file.uri is not None, "Gemini file upload returned no URI"
-    assert uploaded_file.name is not None, "Gemini file upload returned no name"
+    if uploaded_file.uri is None:
+        raise RuntimeError("Gemini file upload returned no URI")
+    if uploaded_file.name is None:
+        raise RuntimeError("Gemini file upload returned no name")
     try:
         part = types.Part.from_uri(file_uri=uploaded_file.uri, mime_type="video/mp4")
         prompt = (
