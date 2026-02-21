@@ -21,19 +21,17 @@
 ```
 Next.js PWA (Vercel) + Clerk (auth UI)
     ↓ REST + Clerk JWT (verified via JWKS)
-FastAPI (Cloud Run)
+FastAPI (Cloud Run)   [Inngest mounted via inngest.fast_api.serve()]
     ↓ store raw video
 Cloud Storage
-    ↓ publish event
-Pub/Sub
-    ↓ trigger
-AI Pipeline (Cloud Run Job)
-    ├── Stage 0: Voice Memo STT + extraction (optional)
-    ├── Stage 1: Video Analysis            (Gemini 3 Flash, structured single-agent)
-    ├── Stage 2: RAG Agent                 (Supabase pgvector)
-    ├── Stage 3a: Coaching Text            → delivered to chat (~2–3 min)
-    ├── Stage 3b: Narration Script         (Gemini 3 Flash)
-    └── Stage 4: Video Production          (Cloud TTS + FFmpeg)
+    ↓ inngest_client.send("video/uploaded", data={session_id, ...})
+Inngest (durable pipeline — each stage is a step.run())
+    ├── Step 0: Voice Memo STT + extraction (optional)
+    ├── Step 1: Video Analysis            (Gemini 3 Flash, structured single-agent)
+    ├── Step 2: RAG Agent                 (Supabase pgvector)
+    ├── Step 3a: Coaching Text            → delivered to chat (~2–3 min)
+    ├── Step 3b: Narration Script         (Gemini 3 Flash)
+    └── Step 4: Video Production          (Cloud TTS + FFmpeg)
          ↓ upload coaching_video.mp4
 Cloud Storage → GCS path → signed URL at read time
     ↓ write result
@@ -268,7 +266,9 @@ GET    /api/learner-state/               → current learner state
 
 ## AI Pipeline Specification
 
-Triggered by Pub/Sub message after video upload. Runs as Cloud Run Job.
+Triggered by Inngest event (`video/uploaded`) after upload completes. The pipeline is a single durable Inngest function mounted on FastAPI via `inngest.fast_api.serve()`. Each stage is a discrete `step.run()` — retries, observability, and idempotency are handled natively by Inngest per step.
+
+**Inngest retry policy**: each step retries up to 4 times with exponential backoff. Failed runs appear in the Inngest dashboard with full per-step input/output. A `status="failed"` session can be manually re-triggered from the dashboard or via a future admin endpoint.
 
 ### Stage 0 — Voice Memo Processing (pre-pipeline, optional)
 
@@ -314,17 +314,23 @@ Prompt: "Watch this cooking video of {dish_name}. Think step by step:
                     key_moment_seconds, diagnosis }"
 ```
 
-**Idempotency guard** (pipeline entrypoint):
+**Idempotency guard** (Inngest function entrypoint):
 ```python
-if session.pipeline_job_id and session.status not in ("failed", "uploaded"):
-    return  # already processing or completed — at-least-once Pub/Sub delivery guard
-            # "failed" sessions are retryable; "uploaded" is the expected entry state
-session.pipeline_job_id = uuid4()
-session.status = "processing"
-session.save()
+@inngest_client.create_function(
+    fn_id="cooking-pipeline",
+    trigger=inngest.TriggerEvent(event="video/uploaded"),
+    retries=4,
+)
+async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
+    session_id = ctx.event.data["session_id"]
+    session = await get_session(session_id)
+    if session.status not in ("uploaded", "failed"):
+        return  # already processing or completed — guard against duplicate events
+    await set_session_status(session_id, "processing")
+    # stages follow as step.run() calls ...
 ```
 
-**Pub/Sub retry policy**: Pub/Sub redelivers on non-ack up to 7 days. Dead-letter topic (`pipeline-worker-dlq`) configured for messages that exceed 5 delivery attempts. Failed sessions (`status="failed"`) can be manually re-triggered or retried via a future admin endpoint.
+Inngest deduplicates events by `event_id` and retries each `step.run()` independently. Per-step input/output is visible in the Inngest dashboard waterfall view.
 
 **Output**: `session.video_analysis` (JSON)
 
@@ -630,8 +636,7 @@ Browser (speaker)
 | Database + Vector search | Supabase (PostgreSQL 16 + pgvector) |
 | Embeddings | Gemini Embeddings API (`gemini-embedding-001`, 768-dim) |
 | File storage | Google Cloud Storage |
-| Async events | Pub/Sub |
-| AI pipeline runner | Cloud Run Jobs |
+| AI pipeline | Inngest (durable functions, mounted on FastAPI via `inngest.fast_api.serve()`) |
 | Video analysis | Gemini 3 Flash (`gemini-3-flash`, single-agent structured prompting) |
 | Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) |
 | TTS | Google Cloud TTS (Chirp 3 HD ja-JP) |
@@ -641,7 +646,7 @@ Browser (speaker)
 | Frontend hosting | Vercel |
 | Backend hosting | Cloud Run (FastAPI) |
 | IaC | Terraform |
-| CI/CD | Cloud Build (backend) + Vercel CI (frontend) |
+| CI/CD | GitHub Actions (backend + production gating) + Vercel native integration (preview deployments) |
 | Python package manager | uv |
 | Python linter/formatter | ruff |
 | Frontend package manager | bun |
@@ -666,6 +671,18 @@ Browser (speaker)
 - Radix UI primitives underneath ensure accessibility out of the box
 - Tailwind is the standard pairing for Next.js App Router projects
 
+**Inngest** replaces Google Cloud Pub/Sub + Cloud Run Jobs for the AI pipeline.
+- Durable step functions in pure Python — each stage is `await step.run("name", fn)`, no separate queue infrastructure
+- Native asyncio, one-line FastAPI mount: `inngest.fast_api.serve(app, client, [cooking_pipeline])`
+- Per-step retry, observability (waterfall view with input/output per step), and deduplication built in
+- Eliminates: Pub/Sub topic + subscription, Cloud Run Job container, manual DLQ configuration
+
+**GitHub Actions** replaces Cloud Build for backend CI/CD.
+- Keyless GCP auth via Workload Identity Federation (`google-github-actions/auth@v2`) — no JSON key files stored
+- Unified pipeline: lint → test → build → deploy backend (Cloud Run) in one workflow
+- Vercel native GitHub integration kept for automatic preview deployments per PR
+- Single secrets store (GitHub Environments) for both backend and frontend — no duplication across Cloud Build and Vercel
+
 **Tanstack Query** for frontend server state.
 - Handles caching, background refetch, stale-while-revalidate — essential for polling pipeline status
 - `useQuery` with `refetchInterval` is the natural pattern for watching `text_ready → completed` transitions
@@ -680,10 +697,10 @@ Browser (speaker)
 2. Clerk webhook handler (`POST /webhooks/clerk/`): create User + ChatRooms on `user.created`; `GET /auth/me/`
 3. Dish + Session + LearnerState models + Alembic migrations
 4. Video upload endpoint → GCS
-5. Pub/Sub publisher on upload
+5. Inngest client setup + `inngest_client.send("video/uploaded")` on upload complete
 
 ### Phase 2 — AI Pipeline
-6. Cloud Run Job scaffold (pipeline entrypoint + idempotency guard)
+6. Inngest function scaffold (`@inngest_client.create_function` + `inngest.fast_api.serve()` mount)
 7. Stage 0: Voice memo STT + entity extraction (optional pre-stage)
 8. Stage 1: Video Analysis Agent (Gemini, structured single-agent)
 9. Stage 2: RAG Agent (Supabase pgvector similarity search)

@@ -58,15 +58,15 @@
                    │ REST + JWT
 ┌──────────────────▼──────────────────────────────────┐
 │  Backend: FastAPI (Cloud Run)                       │
-│  - JWT auth, user management, chat rooms            │
+│  - Clerk JWT auth, user management, chat rooms      │
 │  - Video upload → Cloud Storage                     │
-│  - Triggers Pub/Sub events                          │
+│  - Triggers Inngest event (video/uploaded)          │
 │  - /ws/companion: WebSocket → Gemini Live [post-PMF]│
 │  Supabase (PostgreSQL + pgvector) + SQLModel + Alembic │
 └──────────┬──────────────────────────────────────────┘
-           │ Pub/Sub
+           │ Inngest event (video/uploaded)
 ┌──────────▼──────────────────────────────────────────┐
-│  AI Pipeline (Cloud Run Jobs)                       │
+│  AI Pipeline (Inngest durable functions)            │
 │  ┌─────────────────────────────────────────────┐   │
 │  │ 0. Voice Memo (optional)                    │   │
 │  │    - Google STT → voice_transcript          │   │
@@ -179,8 +179,7 @@ at any time and the AI responds in context of their session.
 | Vector search | Pinecone (proprietary chef data) | Supabase pgvector — same DB, no separate service |
 | Embeddings | Proprietary | Gemini Embeddings API (`gemini-embedding-001`) |
 | Media storage | S3 | Cloud Storage |
-| Async event bus | SQS / SNS | Pub/Sub |
-| Pipeline workers | Lambda / ECS | Cloud Run Jobs |
+| Async pipeline | SQS / SNS + Lambda / ECS | Inngest (durable step functions, mounted on FastAPI) |
 | Video analysis | Hybrid: custom CV + foundation model | Gemini 3 Flash (`gemini-3-flash`), single-agent structured prompting |
 | Key moment detection | Custom CV with timestamp output | Extracted as part of structured prompt output |
 | Knowledge base | Proprietary chef coaching dataset | Curated cooking principles (Markdown → pgvector) |
@@ -188,12 +187,12 @@ at any time and the AI responds in context of their session.
 | Learner state | PostgreSQL + custom | Supabase PostgreSQL (LearnerState SQLModel) |
 | Feedback latency | Up to 2 days (by design) | ~2–3 min (text) / ~5–10 min (video) |
 | Feedback delivery | Single delivery (video only) | Tiered: text first, video follows |
-| TTS (coaching audio) | Unknown | Google Cloud TTS (Neural2 ja-JP) |
-| Video composition | Unknown (FFmpeg likely) | FFmpeg on Cloud Run Jobs |
+| TTS (coaching audio) | Unknown | Google Cloud TTS (Chirp 3 HD ja-JP) |
+| Video composition | Unknown (FFmpeg likely) | FFmpeg (runs inside Inngest step on Cloud Run) |
 | Real-time coaching | None | Gemini Live companion mode (post-PMF) |
 | Chat room names | My Coaching / Help / Cooking Videos | My Coaching / Cooking Videos (Help: post-MVP) |
 | IaC | Terraform | Terraform |
-| CI/CD | Unknown | Cloud Build (backend) + Vercel CI (frontend) |
+| CI/CD | Unknown | GitHub Actions (backend, keyless WIF auth) + Vercel native integration (previews) |
 
 ## AI Agent Comparison
 

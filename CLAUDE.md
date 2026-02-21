@@ -34,9 +34,8 @@ uv run mypy .
 # Frontend lint/format
 bunx biome check --write .
 
-# Local pipeline testing
-gcloud beta emulators pubsub start --project=local-dev   # separate terminal
-uv run python pipeline/worker.py --local                 # separate terminal
+# Local pipeline testing (Inngest dev server)
+npx inngest-cli@latest dev                               # separate terminal — serves Inngest UI at localhost:8288
 ```
 
 ## Architecture
@@ -51,10 +50,12 @@ Next.js PWA (Vercel) + Clerk (auth UI) → FastAPI (Cloud Run) via REST + Clerk 
 - No passwords or secrets stored in our DB
 
 ### Async AI Pipeline
-Video upload → GCS → Pub/Sub → Cloud Run Job:
+Video upload → GCS → `inngest_client.send("video/uploaded")` → Inngest durable function:
+
+The pipeline is an Inngest function mounted on FastAPI (`inngest.fast_api.serve()`). Each stage is a `step.run()` call — Inngest handles per-step retries, observability, and deduplication. Local dev: `npx inngest-cli@latest dev` (UI at `localhost:8288`).
 
 0. **Stage 0 — Voice Memo** (`pipeline/stages/voice_memo.py`): Optional. Google STT → `voice_transcript`; Gemini entity extraction → `structured_input`.
-1. **Stage 1 — Video Analysis** (`pipeline/stages/video_analysis.py`): Gemini 3 Flash, single-agent structured prompt. Extracts cooking events, environment state, diagnosis, `key_moment_timestamp` in one call. Idempotency guard: check `session.pipeline_job_id` before processing.
+1. **Stage 1 — Video Analysis** (`pipeline/stages/video_analysis.py`): Gemini 3 Flash, single-agent structured prompt. Extracts cooking events, environment state, diagnosis, `key_moment_timestamp` in one call.
 2. **Stage 2 — RAG** (`pipeline/stages/rag.py`): Embed query with Gemini `gemini-embedding-001` → pgvector similarity search in Supabase → top-3 cooking principles + past session summaries.
 3. **Stage 3a — Coaching Text** (`pipeline/stages/coaching_script.py`): Gemini generates `coaching_text` (4-section JSON). Posted to Coaching chat immediately. Session status → `text_ready`. (~2–3 min after upload)
 4. **Stage 3b — Narration Script**: Gemini generates `narration_script` (part1 / pivot / part2).

@@ -15,15 +15,14 @@ A clone of [Cookpad's moment](https://cookwithmoment.com) — an AI-powered pers
 | Embeddings | Gemini Embeddings API (`gemini-embedding-001`) | Same API key as coaching LLM; no extra vendor |
 | Auth | Clerk | Auth UI + session management out of the box; FastAPI verifies JWTs via JWKS |
 | File storage | Google Cloud Storage | Large video files; signed URLs for secure delivery |
-| Async queue | Google Cloud Pub/Sub | Decouples upload from pipeline execution |
-| AI pipeline | Cloud Run Jobs | Isolated Python environment; FFmpeg + GCP libraries |
+| AI pipeline | Inngest | Durable step functions in pure Python; mounted on FastAPI; built-in retries + observability |
 | Video analysis | Gemini 3 Flash (`gemini-3-flash`) | Single-agent structured prompting; multimodal video input |
 | Coaching LLM | Gemini 3 Flash (`gemini-3-flash`) | Consistent model across all AI tasks |
 | TTS | Google Cloud TTS (Neural2 ja-JP) | Natural Japanese coaching voice |
 | Video composition | FFmpeg | Clip extraction + audio sync + concat |
 | Payments | Stripe | Subscriptions |
 | IaC | Terraform | GCP infrastructure |
-| CI/CD | Cloud Build (backend) + Vercel CI (frontend) | |
+| CI/CD | GitHub Actions (backend) + Vercel native integration (previews) | Keyless GCP auth via WIF; unified secrets in GitHub Environments |
 
 ## Prerequisites
 
@@ -66,11 +65,8 @@ cd frontend
 bun install
 bun dev
 
-# 8. (Separate terminal) Start the Pub/Sub emulator for local pipeline testing
-gcloud beta emulators pubsub start --project=local-dev
-
-# 9. (Separate terminal) Run the pipeline worker locally
-uv run python pipeline/worker.py --local
+# 8. (Separate terminal) Start the Inngest dev server for local pipeline testing
+npx inngest-cli@latest dev
 ```
 
 ## Environment Variables
@@ -93,9 +89,9 @@ GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
 GCS_BUCKET=moment-clone-media
 GCS_SIGNED_URL_EXPIRY_DAYS=7
 
-# Pub/Sub
-PUBSUB_TOPIC=session-uploaded
-PUBSUB_SUBSCRIPTION=pipeline-worker
+# Inngest
+INNGEST_EVENT_KEY=
+INNGEST_SIGNING_KEY=
 
 # Gemini
 GEMINI_API_KEY=
@@ -144,8 +140,8 @@ moment-clone/
 │   ├── components/             # shadcn/ui components
 │   └── lib/                    # Tanstack Query hooks, API client
 │
-├── pipeline/                   # AI pipeline (Cloud Run Jobs)
-│   ├── worker.py               # Entrypoint — receives Pub/Sub message
+├── pipeline/                   # AI pipeline (Inngest durable functions)
+│   ├── functions.py            # Inngest function definition + step.run() stages
 │   └── stages/
 │       ├── voice_memo.py       # Stage 0: STT + entity extraction
 │       ├── video_analysis.py   # Stage 1: Gemini structured single-agent
@@ -204,20 +200,15 @@ See [`docs/design.md`](docs/design.md) for the full pipeline specification.
 
 ## Deployment
 
+Handled by GitHub Actions (backend) and Vercel native integration (frontend).
+
 ```bash
-# Backend
-gcloud builds submit --tag gcr.io/$PROJECT_ID/moment-clone-backend ./backend
-gcloud run deploy moment-clone-backend \
-  --image gcr.io/$PROJECT_ID/moment-clone-backend \
-  --region us-central1
+# Backend — push to main triggers GitHub Actions workflow:
+# lint → test → docker build → push to Artifact Registry → gcloud run deploy
+# Uses Workload Identity Federation (keyless GCP auth — no JSON key files)
 
-# Pipeline worker
-gcloud run jobs deploy pipeline-worker \
-  --image gcr.io/$PROJECT_ID/moment-clone-backend \
-  --command python,pipeline/worker.py
-
-# Frontend
-cd frontend && vercel --prod
+# Frontend — Vercel deploys automatically on push via GitHub integration
+# Preview deployments per PR; production on merge to main
 ```
 
 ## Documentation
