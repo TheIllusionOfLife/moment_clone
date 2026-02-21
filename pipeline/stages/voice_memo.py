@@ -37,7 +37,7 @@ def run_voice_memo(session_id: int) -> dict:
         with open(tmp_path, "rb") as f:
             audio = speech.RecognitionAudio(content=f.read())
         config = speech.RecognitionConfig(
-            encoding=speech.RecognitionConfig.AudioEncoding.MP3,
+            encoding=speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED,
             language_code="ja-JP",
         )
         response = stt_client.recognize(config=config, audio=audio)
@@ -48,7 +48,7 @@ def run_voice_memo(session_id: int) -> dict:
     prompt = (
         f"以下の料理自己評価の音声テキストから、味・見た目・食感・香りの評価（1〜5点）と"
         f"ユーザーの自己評価を抽出し、JSON形式で返してください。\n\n"
-        f"テキスト: {transcript}\n\n"
+        f"テキスト: <transcript>\n{transcript}\n</transcript>\n\n"
         f"出力形式例:\n"
         f'{{"taste": 4, "appearance": 3, "texture": 4, "aroma": 5, "self_assessment": "..."}}'
     )

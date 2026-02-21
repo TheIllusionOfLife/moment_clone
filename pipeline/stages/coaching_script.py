@@ -5,7 +5,7 @@ the session row, updates LearnerState, and posts messages to the coaching and
 cooking_videos chat rooms.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from google import genai
 from sqlmodel import Session as DBSession
@@ -58,7 +58,9 @@ def _build_prompt(session, dish, retrieved_context: dict, ls: LearnerState) -> s
 {video_analysis}
 
 ## ユーザー入力
+<user_content>
 {structured_input}
+</user_content>
 
 ## 関連する料理原則（RAG）
 {principles_text}
@@ -120,24 +122,27 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
         # Update LearnerState — still in the SELECT FOR UPDATE block
         diagnosis = (session.video_analysis or {}).get("diagnosis", "")
 
-        # Append session summary
-        ls.session_summaries = (ls.session_summaries or []) + [
-            {
-                "session_id": session_id,
-                "mondaiten": coaching_text["mondaiten"],
-                "skill": coaching_text["skill"],
-            }
-        ]
+        # Append session summary — guard against double-append on Inngest retry
+        summaries = ls.session_summaries or []
+        already_processed = any(s.get("session_id") == session_id for s in summaries)
+        if not already_processed:
+            ls.session_summaries = summaries + [
+                {
+                    "session_id": session_id,
+                    "mondaiten": coaching_text["mondaiten"],
+                    "skill": coaching_text["skill"],
+                }
+            ]
 
-        # Update recurring_mistakes
-        if diagnosis:
-            existing = ls.recurring_mistakes or []
-            matched = next((m for m in existing if m.get("text") == diagnosis), None)
-            if matched:
-                matched["count"] = matched.get("count", 1) + 1
-                ls.recurring_mistakes = existing
-            else:
-                ls.recurring_mistakes = existing + [{"text": diagnosis, "count": 1}]
+            # Update recurring_mistakes (only on first run for this session)
+            if diagnosis:
+                existing = ls.recurring_mistakes or []
+                matched = next((m for m in existing if m.get("text") == diagnosis), None)
+                if matched:
+                    matched["count"] = matched.get("count", 1) + 1
+                    ls.recurring_mistakes = existing
+                else:
+                    ls.recurring_mistakes = existing + [{"text": diagnosis, "count": 1}]
 
         # Promote skills_developing → skills_acquired for session_number >= 2
         if session.session_number >= 2:
@@ -165,7 +170,7 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
     update_session_fields(
         session_id,
         coaching_text=coaching_text,
-        coaching_text_delivered_at=datetime.utcnow(),
+        coaching_text_delivered_at=datetime.now(UTC),
         status="text_ready",
     )
 

@@ -36,7 +36,7 @@ def test_parse_json_with_plain_fence():
 
 
 def test_parse_json_invalid_raises():
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(ValueError, match="No JSON object found"):
         _parse_json_response("not json")
 
 

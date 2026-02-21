@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from google import genai
+from google.genai import types
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 
@@ -150,7 +151,7 @@ async def send_message(
     }
 
 
-async def _generate_coaching_reply(
+def _generate_coaching_reply(
     session_id: int | None,
     user_id: int,
     room_id: int,
@@ -206,17 +207,19 @@ async def _generate_coaching_reply(
             )
         else:
             context_str = "\n".join(context_parts)
-            system_prompt = (
+            # Use system_instruction to isolate user content from AI persona prompt,
+            # preventing prompt injection via crafted user messages.
+            system_instruction = (
                 "あなたは料理コーチです。ユーザーの料理スキル向上を支援します。"
                 "以下のコンテキストを参考に、具体的で実践的なアドバイスを日本語で提供してください。\n\n"
                 f"コンテキスト:\n{context_str}\n\n"
-                f"会話履歴:\n{history_text}\n\n"
-                f"ユーザーの質問: {user_text}"
+                f"会話履歴:\n{history_text}"
             )
             gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
             response = gemini_client.models.generate_content(
                 model=settings.GEMINI_MODEL,
-                contents=system_prompt,
+                contents=user_text,
+                config=types.GenerateContentConfig(system_instruction=system_instruction),
             )
             reply = response.text or ""
 
