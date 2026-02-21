@@ -1,1 +1,18 @@
 .DS_Store
+.env
+.env.local
+.env*.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE / AI tools
+.agent/
+.agents/
+.claude/
+.kiro/
+.mcp.json
+.windsurf/
+skills-lock.json

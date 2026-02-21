@@ -87,9 +87,46 @@ Markdown principles → embedded via Gemini `gemini-embedding-001` (768-dim) →
 | Feedback delivery | Tiered (text first) | Users read diagnosis in ~2–3 min while video encodes; vs Moment's 2-day wait |
 | Coaching video storage | GCS path (not URL) | Signed URL generated at read time; no stale URLs in chat history |
 
+## MCP Servers
+
+Two MCP servers are available in this project. Use them instead of raw SQL or Inngest API calls.
+
+### Supabase MCP (`mcp__supabase__*`)
+| Tool | Purpose |
+|------|---------|
+| `execute_sql` | Run SELECT queries, debug data |
+| `apply_migration` | DDL changes (CREATE/ALTER/DROP) — preferred over raw `execute_sql` for schema changes |
+| `list_tables` | Inspect schema |
+| `list_migrations` | See migration history |
+| `list_extensions` | Check enabled Postgres extensions |
+| `get_logs` | Fetch last-24hr logs by service: `api`, `postgres`, `auth`, `storage`, `realtime`, `edge-function` |
+| `get_advisors` | Security/performance advisory notices — run after DDL changes |
+| `get_project_url` | Retrieve Supabase project URL |
+| `get_publishable_keys` | Retrieve anon/publishable API keys |
+| `generate_typescript_types` | Generate TS types from current schema |
+| `search_docs` | Search Supabase docs via GraphQL |
+| `list_edge_functions` | List deployed Edge Functions |
+| `get_edge_function` | Read Edge Function source |
+| `deploy_edge_function` | Deploy an Edge Function |
+| `create_branch` / `list_branches` / `delete_branch` / `merge_branch` / `reset_branch` / `rebase_branch` | Supabase branching workflow |
+
+### Inngest Dev MCP (`mcp__inngest-dev__*`)
+Requires `npx inngest-cli@latest dev` running in a separate terminal (UI at `localhost:8288`).
+
+| Tool | Purpose |
+|------|---------|
+| `list_functions` | List all registered Inngest functions |
+| `send_event` | Fire an event to trigger functions (fire-and-forget) |
+| `invoke_function` | Invoke a function and wait for its result |
+| `get_run_status` | Get detailed trace/status for a run ID |
+| `poll_run_status` | Poll until a run completes |
+| `list_docs` | List Inngest documentation categories |
+| `read_doc` | Read a specific Inngest doc |
+| `grep_docs` | Search Inngest docs by pattern |
+
 ## Baked-in constraints
 - **Japanese only** (`ja-JP`): all prompts, TTS (Chirp 3 HD `ja-JP-Chirp3-HD-*`), coaching text
-- **`gemini-3-flash`** for all AI tasks. `gemini-embedding-001` (768-dim) for embeddings. Both via `GEMINI_API_KEY`.
+- **`gemini-3-flash-preview`** for all AI tasks (API identifier; model is Gemini 3 Flash). `gemini-embedding-001` (768-dim) for embeddings. Both via `GEMINI_API_KEY`.
 - **Session limits**: `unique_together=(user_id, dish_id, session_number)` + `CHECK session_number IN (1,2,3)`
 - **Pivot line is fixed**: `"動画を使ってそのポイントを見てみましょう"` always the exact string in `narration_script.pivot`
 - **Status flow**: `pending_upload → uploaded → processing → text_ready → completed` (or `failed`)

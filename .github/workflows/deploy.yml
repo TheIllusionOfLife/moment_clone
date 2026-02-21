@@ -1,0 +1,62 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  PROJECT_ID: moment-clone
+  REGION: asia-northeast1
+  REPOSITORY: moment-clone
+  SERVICE: moment-clone-api
+  IMAGE: asia-northeast1-docker.pkg.dev/moment-clone/moment-clone/moment-clone-api
+
+jobs:
+  deploy:
+    name: Build & Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for Workload Identity Federation
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push Docker image
+        run: |
+          docker build \
+            --tag "${{ env.IMAGE }}:${{ github.sha }}" \
+            --tag "${{ env.IMAGE }}:latest" \
+            .
+          docker push "${{ env.IMAGE }}:${{ github.sha }}"
+          docker push "${{ env.IMAGE }}:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE }} \
+            --image "${{ env.IMAGE }}:${{ github.sha }}" \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-secrets="DATABASE_URL=DATABASE_URL:latest,\
+          CLERK_SECRET_KEY=CLERK_SECRET_KEY:latest,\
+          CLERK_WEBHOOK_SECRET=CLERK_WEBHOOK_SECRET:latest,\
+          CLERK_JWKS_URL=CLERK_JWKS_URL:latest,\
+          INNGEST_EVENT_KEY=INNGEST_EVENT_KEY:latest,\
+          INNGEST_SIGNING_KEY=INNGEST_SIGNING_KEY:latest,\
+          GEMINI_API_KEY=GEMINI_API_KEY:latest,\
+          GCS_BUCKET=GCS_BUCKET:latest" \
+            --service-account ${{ secrets.CLOUD_RUN_SA }} \
+            --quiet
