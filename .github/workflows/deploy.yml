@@ -57,6 +57,7 @@ jobs:
           INNGEST_EVENT_KEY=INNGEST_EVENT_KEY:latest,\
           INNGEST_SIGNING_KEY=INNGEST_SIGNING_KEY:latest,\
           GEMINI_API_KEY=GEMINI_API_KEY:latest,\
-          GCS_BUCKET=GCS_BUCKET:latest" \
+          GCS_BUCKET=GCS_BUCKET:latest,\
+          CORS_ORIGINS=CORS_ORIGINS:latest" \
             --service-account ${{ secrets.CLOUD_RUN_SA }} \
             --quiet
