@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -84,7 +85,8 @@ async def list_sessions(
     sessions = (
         (await db.execute(stmt.order_by(col(CookingSession.created_at).desc()))).scalars().all()
     )
-    return [await _session_to_dict(s) for s in sessions]
+    # Generate signed URLs in parallel to reduce latency
+    return await asyncio.gather(*[_session_to_dict(s) for s in sessions])
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -267,20 +269,36 @@ async def get_session_detail(
 
 
 async def _session_to_dict(s: CookingSession) -> dict:
-    raw_video_url = None
+    # Prepare tasks for parallel execution
+    raw_video_task = None
     if s.raw_video_url:
-        raw_video_url = await generate_signed_url(
+        raw_video_task = generate_signed_url(
             bucket=settings.GCS_BUCKET,
             object_path=s.raw_video_url,
             expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
         )
-    coaching_video_url = None
+
+    coaching_video_task = None
     if s.coaching_video_gcs_path:
-        coaching_video_url = await generate_signed_url(
+        coaching_video_task = generate_signed_url(
             bucket=settings.GCS_BUCKET,
             object_path=s.coaching_video_gcs_path,
             expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
         )
+
+    # Resolve tasks concurrently
+    raw_video_url = None
+    coaching_video_url = None
+
+    if raw_video_task and coaching_video_task:
+        raw_video_url, coaching_video_url = await asyncio.gather(
+            raw_video_task, coaching_video_task
+        )
+    elif raw_video_task:
+        raw_video_url = await raw_video_task
+    elif coaching_video_task:
+        coaching_video_url = await coaching_video_task
+
     return {
         "id": s.id,
         "user_id": s.user_id,
