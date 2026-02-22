@@ -15,6 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { StarRating } from "@/components/star-rating";
 
 const MAX_VIDEO_MB = 500;
 const isFree = (slug: string) => slug === "free";
@@ -186,23 +187,12 @@ export default function NewSessionPage() {
             {ratingLabels.map(({ key, label }) => (
               <div key={key} className="flex items-center justify-between">
                 <Label className="w-16">{label}</Label>
-                <div className="flex gap-1">
-                  {[1, 2, 3, 4, 5].map((v) => (
-                    <button
-                      type="button"
-                      key={v}
-                      aria-label={`${label} ${v}点`}
-                      aria-pressed={v <= ratings[key]}
-                      onClick={() =>
-                        setRatings((r) => ({ ...r, [key]: v }))
-                      }
-                      className={`text-xl ${v <= ratings[key] ? "text-amber-400" : "text-zinc-200"}`}
-                      disabled={uploading}
-                    >
-                      ★
-                    </button>
-                  ))}
-                </div>
+                <StarRating
+                  label={label}
+                  value={ratings[key]}
+                  onChange={(v) => setRatings((r) => ({ ...r, [key]: v }))}
+                  disabled={uploading}
+                />
               </div>
             ))}
           </CardContent>
