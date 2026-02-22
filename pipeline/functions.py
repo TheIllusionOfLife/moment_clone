@@ -127,23 +127,24 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
             logger.exception("PIPELINE ERROR [session=%s] stage-2-rag", session_id)
             raise
 
-    async def _stage_3a(ctx: dict) -> dict:
+    async def _stage_3a(retrieved_context: dict) -> dict:
         try:
-            return await asyncio.to_thread(run_coaching_script, session_id, ctx)
+            return await asyncio.to_thread(run_coaching_script, session_id, retrieved_context)
         except Exception:
             logger.exception("PIPELINE ERROR [session=%s] stage-3a-coaching-text", session_id)
             raise
 
-    async def _stage_3b(ctx: dict) -> dict:
+    async def _stage_3b(coaching_text: dict) -> dict:
         try:
-            return await asyncio.to_thread(run_narration_script, session_id, ctx)
+            return await asyncio.to_thread(run_narration_script, session_id, coaching_text)
         except Exception:
             logger.exception("PIPELINE ERROR [session=%s] stage-3b-narration-script", session_id)
             raise
 
-    async def _stage_4(script: dict) -> None:
+    async def _stage_4(script: dict) -> str:
         try:
-            await asyncio.to_thread(run_video_production, session_id, script)
+            gcs_path = await asyncio.to_thread(run_video_production, session_id, script)
+            return gcs_path
         except Exception:
             logger.exception("PIPELINE ERROR [session=%s] stage-4-video-production", session_id)
             raise
@@ -175,9 +176,15 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
     except Exception as exc:
         # Stage wrappers already log the specific exception; here we persist the
         # failed status so the session doesn't stay stuck at "processing".
-        # Re-raise so Inngest records the failure and stops retrying.
+        # Wrap mark-failed so it cannot mask the original exception.
         error_msg = str(exc)
-        await step.run(  # type: ignore[arg-type, return-value]
-            "mark-failed", lambda: _set_terminal_status("failed", error=error_msg)
-        )
-        raise
+        try:
+            await step.run(  # type: ignore[arg-type, return-value]
+                "mark-failed", lambda: _set_terminal_status("failed", error=error_msg)
+            )
+        except Exception:
+            logger.exception(
+                "PIPELINE ERROR [session=%s] mark-failed (secondary error — original exc below)",
+                session_id,
+            )
+        raise  # always re-raise the original stage exception

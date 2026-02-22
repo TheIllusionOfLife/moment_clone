@@ -12,7 +12,8 @@ from pipeline.functions import cooking_pipeline
 # Surface the Inngest SDK's internal logger so Cloud Run captures API-level
 # failures (e.g. _get_batch / _get_steps auth errors) that would otherwise
 # appear only as silent HTTP 500s with no Python traceback.
-logging.getLogger("inngest").setLevel(logging.DEBUG)
+# INFO is sufficient: the SDK uses logger.error() for failures we care about.
+logging.getLogger("inngest").setLevel(logging.INFO)
 
 app = FastAPI(
     title="Moment Clone API",
