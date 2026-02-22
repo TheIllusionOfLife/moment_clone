@@ -2,10 +2,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Session, col, select
 
 from backend.core.auth import get_current_user
-from backend.core.database import get_engine, get_session
+from backend.core.database import get_async_session, get_engine
 from backend.core.settings import settings
 from backend.models.chat import ChatRoom, Message
 from backend.models.dish import Dish
@@ -24,19 +25,25 @@ VALID_ROOM_TYPES = {"coaching", "cooking_videos"}
 # ---------------------------------------------------------------------------
 
 
-def get_owned_chatroom(
+async def get_owned_chatroom(
     room_type: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> ChatRoom:
     if room_type not in VALID_ROOM_TYPES:
         raise HTTPException(status_code=404, detail="Chat room not found")
-    room = db.exec(
-        select(ChatRoom).where(
-            ChatRoom.user_id == current_user.id,
-            ChatRoom.room_type == room_type,
+    room = (
+        (
+            await db.execute(
+                select(ChatRoom).where(
+                    ChatRoom.user_id == current_user.id,
+                    ChatRoom.room_type == room_type,
+                )
+            )
         )
-    ).first()
+        .scalars()
+        .first()
+    )
     if room is None:
         raise HTTPException(status_code=404, detail="Chat room not found")
     return room
@@ -48,11 +55,15 @@ def get_owned_chatroom(
 
 
 @router.get("/rooms/")
-def list_rooms(
+async def list_rooms(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> list[dict]:
-    rooms = db.exec(select(ChatRoom).where(ChatRoom.user_id == current_user.id)).all()
+    rooms = (
+        (await db.execute(select(ChatRoom).where(ChatRoom.user_id == current_user.id)))
+        .scalars()
+        .all()
+    )
     return [
         {"id": r.id, "room_type": r.room_type, "created_at": r.created_at.isoformat()}
         for r in rooms
@@ -64,16 +75,22 @@ async def list_messages(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     room: ChatRoom = Depends(get_owned_chatroom),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> dict:
     offset = (page - 1) * page_size
-    messages = db.exec(
-        select(Message)
-        .where(Message.chat_room_id == room.id)
-        .order_by(col(Message.created_at).desc())
-        .offset(offset)
-        .limit(page_size)
-    ).all()
+    messages = (
+        (
+            await db.execute(
+                select(Message)
+                .where(Message.chat_room_id == room.id)
+                .order_by(col(Message.created_at).desc())
+                .offset(offset)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     results = []
     for m in reversed(messages):  # return chronological order
@@ -107,7 +124,7 @@ async def send_message(
     background_tasks: BackgroundTasks,
     room: ChatRoom = Depends(get_owned_chatroom),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> dict:
     if not body.text.strip():
         raise HTTPException(status_code=422, detail="Message text cannot be empty")
@@ -118,19 +135,25 @@ async def send_message(
         text=body.text.strip(),
     )
     db.add(message)
-    db.commit()
-    db.refresh(message)
+    await db.commit()
+    await db.refresh(message)
 
     if room.room_type == "coaching":
         # Find most recent completed session for context (may be None)
-        latest_session = db.exec(
-            select(CookingSession)
-            .where(
-                CookingSession.user_id == current_user.id,
-                CookingSession.status == "completed",
+        latest_session = (
+            (
+                await db.execute(
+                    select(CookingSession)
+                    .where(
+                        CookingSession.user_id == current_user.id,
+                        CookingSession.status == "completed",
+                    )
+                    .order_by(col(CookingSession.created_at).desc())
+                )
             )
-            .order_by(col(CookingSession.created_at).desc())
-        ).first()
+            .scalars()
+            .first()
+        )
         session_id = latest_session.id if latest_session else None
         if current_user.id is None or room.id is None:
             raise HTTPException(status_code=500, detail="Invalid user or room state")

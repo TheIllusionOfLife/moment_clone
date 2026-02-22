@@ -4,22 +4,23 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from backend.core.auth import get_current_user
-from backend.core.database import get_session
+from backend.core.database import get_async_session
 
 
 @pytest.fixture()
-def client(app, engine, user):
-    def override_get_session():
-        with Session(engine) as session:
+def client(app, async_engine, user):
+    async def override_get_async_session():
+        async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+        async with async_session_factory() as session:
             yield session
 
     def override_auth():
         return user
 
-    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_async_session] = override_get_async_session
     app.dependency_overrides[get_current_user] = override_auth
     with TestClient(app) as c:
         yield c
@@ -27,17 +28,18 @@ def client(app, engine, user):
 
 
 @pytest.fixture()
-def other_client(app, engine, other_user):
+def other_client(app, async_engine, other_user):
     """Client authenticated as a different user."""
 
-    def override_get_session():
-        with Session(engine) as session:
+    async def override_get_async_session():
+        async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+        async with async_session_factory() as session:
             yield session
 
     def override_auth():
         return other_user
 
-    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_async_session] = override_get_async_session
     app.dependency_overrides[get_current_user] = override_auth
     with TestClient(app) as c:
         yield c

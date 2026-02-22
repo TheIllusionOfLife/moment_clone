@@ -3,12 +3,14 @@ import logging
 
 from cachetools import TTLCache
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 from svix.webhooks import Webhook, WebhookVerificationError
 
 from backend.core.auth import get_current_user
-from backend.core.database import get_session
+from backend.core.database import get_async_session
 from backend.core.settings import settings
 from backend.models.chat import ChatRoom
 from backend.models.learner_state import LearnerState
@@ -26,7 +28,7 @@ _processed_webhook_ids: TTLCache = TTLCache(maxsize=10_000, ttl=86400)
 @router.post("/api/webhooks/clerk/", status_code=200)
 async def clerk_webhook(
     request: Request,
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
     svix_id: str = Header(alias="svix-id"),
     svix_timestamp: str = Header(alias="svix-timestamp"),
     svix_signature: str = Header(alias="svix-signature"),
@@ -91,7 +93,11 @@ async def clerk_webhook(
             _processed_webhook_ids[svix_id] = True
             return {"status": "ok"}
 
-        existing = db.exec(select(User).where(User.clerk_user_id == clerk_user_id)).first()
+        existing = (
+            (await db.execute(select(User).where(User.clerk_user_id == clerk_user_id)))
+            .scalars()
+            .first()
+        )
         if existing is None:
             try:
                 user = User(
@@ -100,30 +106,62 @@ async def clerk_webhook(
                     first_name=first_name,
                 )
                 db.add(user)
-                db.flush()  # populate user.id before FK references
+                await db.flush()  # populate user.id before FK references
 
                 db.add(LearnerState(user_id=user.id))
                 db.add(ChatRoom(user_id=user.id, room_type="coaching"))
                 db.add(ChatRoom(user_id=user.id, room_type="cooking_videos"))
-                db.commit()
+                await db.commit()
             except IntegrityError:
-                db.rollback()
+                await db.rollback()
                 # Confirm the collision is the expected clerk_user_id duplicate
                 # (not an unrelated constraint failure such as a missing FK).
                 # If the user doesn't exist, re-raise so Clerk retries the webhook.
-                recovered = db.exec(select(User).where(User.clerk_user_id == clerk_user_id)).first()
+                recovered = (
+                    (await db.execute(select(User).where(User.clerk_user_id == clerk_user_id)))
+                    .scalars()
+                    .first()
+                )
                 if recovered is None:
                     raise
                 logger.info(
-                    "user.created race: user already exists for clerk_user_id=%r", clerk_user_id
+                    "user.created race: user already exists for clerk_user_id=%r",
+                    clerk_user_id,
                 )
 
     _processed_webhook_ids[svix_id] = True
     return {"status": "ok"}
 
 
+class UpdateMeRequest(BaseModel):
+    learner_profile: dict
+
+
+@router.patch("/api/auth/me/")
+async def update_me(
+    body: UpdateMeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+) -> dict:
+    current_user.learner_profile = body.learner_profile
+    current_user.onboarding_done = True
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
+    return {
+        "id": current_user.id,
+        "clerk_user_id": current_user.clerk_user_id,
+        "email": current_user.email,
+        "first_name": current_user.first_name,
+        "onboarding_done": current_user.onboarding_done,
+        "subscription_status": current_user.subscription_status,
+        "learner_profile": current_user.learner_profile,
+        "created_at": current_user.created_at.isoformat(),
+    }
+
+
 @router.get("/api/auth/me/")
-def get_me(current_user: User = Depends(get_current_user)) -> dict:
+async def get_me(current_user: User = Depends(get_current_user)) -> dict:
     return {
         "id": current_user.id,
         "clerk_user_id": current_user.clerk_user_id,

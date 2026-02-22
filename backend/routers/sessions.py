@@ -4,10 +4,11 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
 from backend.core.auth import get_current_user
-from backend.core.database import get_session
+from backend.core.database import get_async_session
 from backend.core.settings import settings
 from backend.models.dish import Dish
 from backend.models.session import CookingSession
@@ -15,10 +16,6 @@ from backend.models.user import User
 from backend.services.gcs import generate_signed_url, upload_file
 from backend.services.inngest_client import send_video_uploaded
 
-# NOTE: These endpoints are async to allow `await _session_to_dict()` (which calls
-# the async `generate_signed_url`). The SQLModel DB calls inside are still synchronous
-# and will block the event loop under high concurrency. The correct long-term fix is
-# adopting an async DB driver (asyncpg + SQLAlchemy async session) — deferred to Phase 3.
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 ALLOWED_VIDEO_MIMES = {"video/mp4", "video/quicktime"}
@@ -35,12 +32,12 @@ _CHUNK_SIZE = 1024 * 1024  # 1 MB read chunks
 # ---------------------------------------------------------------------------
 
 
-def get_owned_session(
+async def get_owned_session(
     session_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> CookingSession:
-    cooking_session = db.get(CookingSession, session_id)
+    cooking_session = await db.get(CookingSession, session_id)
     if not cooking_session or cooking_session.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Session not found")
     return cooking_session
@@ -71,15 +68,17 @@ class RatingsRequest(BaseModel):
 async def list_sessions(
     dish_slug: str | None = None,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> list[dict]:
     stmt = select(CookingSession).where(CookingSession.user_id == current_user.id)
     if dish_slug:
-        dish = db.exec(select(Dish).where(Dish.slug == dish_slug)).first()
+        dish = (await db.execute(select(Dish).where(Dish.slug == dish_slug))).scalars().first()
         if dish is None:
             raise HTTPException(status_code=404, detail="Dish not found")
         stmt = stmt.where(CookingSession.dish_id == dish.id)
-    sessions = db.exec(stmt.order_by(col(CookingSession.created_at).desc())).all()
+    sessions = (
+        (await db.execute(stmt.order_by(col(CookingSession.created_at).desc()))).scalars().all()
+    )
     return [await _session_to_dict(s) for s in sessions]
 
 
@@ -87,18 +86,24 @@ async def list_sessions(
 async def create_session(
     body: CreateSessionRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> dict:
-    dish = db.exec(select(Dish).where(Dish.slug == body.dish_slug)).first()
+    dish = (await db.execute(select(Dish).where(Dish.slug == body.dish_slug))).scalars().first()
     if dish is None:
         raise HTTPException(status_code=404, detail="Dish not found")
 
-    existing = db.exec(
-        select(CookingSession).where(
-            CookingSession.user_id == current_user.id,
-            CookingSession.dish_id == dish.id,
+    existing = (
+        (
+            await db.execute(
+                select(CookingSession).where(
+                    CookingSession.user_id == current_user.id,
+                    CookingSession.dish_id == dish.id,
+                )
+            )
         )
-    ).all()
+        .scalars()
+        .all()
+    )
     session_number = len(existing) + 1
     if session_number > 3:
         raise HTTPException(status_code=400, detail="Maximum 3 sessions per dish")
@@ -110,11 +115,11 @@ async def create_session(
     )
     db.add(cooking_session)
     try:
-        db.commit()
+        await db.commit()
     except IntegrityError as err:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(status_code=409, detail="Session already exists") from err
-    db.refresh(cooking_session)
+    await db.refresh(cooking_session)
     return await _session_to_dict(cooking_session)
 
 
@@ -122,7 +127,7 @@ async def create_session(
 async def upload_video(
     video: UploadFile = File(...),
     owned_session: CookingSession = Depends(get_owned_session),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> dict:
     if video.content_type not in ALLOWED_VIDEO_MIMES:
         raise HTTPException(
@@ -155,8 +160,8 @@ async def upload_video(
     owned_session.status = "uploaded"
     owned_session.pipeline_job_id = uuid.uuid4()
     db.add(owned_session)
-    db.commit()
-    db.refresh(owned_session)
+    await db.commit()
+    await db.refresh(owned_session)
 
     assert owned_session.id is not None  # always set after db.refresh()
     await send_video_uploaded(owned_session.id, owned_session.user_id)
@@ -168,7 +173,7 @@ async def upload_video(
 async def upload_voice_memo(
     audio: UploadFile = File(...),
     owned_session: CookingSession = Depends(get_owned_session),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> dict:
     if audio.content_type not in ALLOWED_AUDIO_MIMES:
         raise HTTPException(
@@ -197,8 +202,8 @@ async def upload_voice_memo(
 
     owned_session.voice_memo_url = gcs_path
     db.add(owned_session)
-    db.commit()
-    db.refresh(owned_session)
+    await db.commit()
+    await db.refresh(owned_session)
     return await _session_to_dict(owned_session)
 
 
@@ -206,13 +211,13 @@ async def upload_voice_memo(
 async def save_ratings(
     body: RatingsRequest,
     owned_session: CookingSession = Depends(get_owned_session),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> dict:
     owned_session.self_ratings = body.model_dump()
     owned_session.updated_at = datetime.now(UTC)
     db.add(owned_session)
-    db.commit()
-    db.refresh(owned_session)
+    await db.commit()
+    await db.refresh(owned_session)
     return await _session_to_dict(owned_session)
 
 

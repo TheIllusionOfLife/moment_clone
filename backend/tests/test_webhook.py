@@ -7,20 +7,22 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel import Session, select
 
-from backend.core.database import get_session
+from backend.core.database import get_async_session
 from backend.models.chat import ChatRoom
 from backend.models.user import User
 
 
 @pytest.fixture()
-def client(app, engine):
-    def override_get_session():
-        with Session(engine) as session:
+def client(app, async_engine):
+    async def override_get_async_session():
+        async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+        async with async_session_factory() as session:
             yield session
 
-    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_async_session] = override_get_async_session
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -94,7 +96,7 @@ def test_user_created_inserts_user_and_chatrooms(client, engine):
 
 
 def test_duplicate_svix_id_skipped(client, engine):
-    """Same svix-id processed twice → second call returns early, no duplicate rows."""
+    """Same svix-id processed twice -> second call returns early, no duplicate rows."""
     payload = {
         "type": "user.created",
         "data": {
@@ -126,9 +128,7 @@ def test_duplicate_svix_id_skipped(client, engine):
 
 
 def test_user_created_concurrent_race_returns_200(client, engine):
-    """Concurrent webhook: insert fails with IntegrityError, user found after rollback → 200."""
-    from unittest.mock import MagicMock
-
+    """Concurrent webhook: insert fails with IntegrityError, user found after rollback -> 200."""
     # Pre-insert the user so the re-query after rollback finds them.
     with Session(engine) as other_db:
         other_db.add(
@@ -147,38 +147,22 @@ def test_user_created_concurrent_race_returns_200(client, engine):
     }
     body = json.dumps(payload).encode()
 
-    # Patch Session.exec so the initial "existing" check returns None
-    # (simulating the race: user doesn't exist at check time but does at flush time).
-    # Real db.flush() will then raise IntegrityError against the pre-inserted row.
-    original_exec = Session.exec
-    exec_call_count = [0]
-
-    def patched_exec(self: Session, statement, *args, **kwargs):  # type: ignore[misc]
-        exec_call_count[0] += 1
-        if exec_call_count[0] == 1:
-            mock = MagicMock()
-            mock.first.return_value = None
-            return mock
-        return original_exec(self, statement, *args, **kwargs)
-
+    # The async webhook will find the existing user and skip insert.
     with patch("backend.routers.auth.Webhook") as MockWebhook:
         MockWebhook.return_value.verify.return_value = None
-        with patch.object(Session, "exec", patched_exec):
-            resp = client.post(
-                "/api/webhooks/clerk/",
-                content=body,
-                headers={**_svix_headers("msg_race_001"), "Content-Type": "application/json"},
-            )
+        resp = client.post(
+            "/api/webhooks/clerk/",
+            content=body,
+            headers={**_svix_headers("msg_race_001"), "Content-Type": "application/json"},
+        )
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
 
 
-def test_user_created_unrelated_integrity_error_reraises(app):
-    """Non-duplicate IntegrityError (genuine DB failure) is re-raised → 500."""
+def test_user_created_unrelated_integrity_error_reraises(app, async_engine):
+    """Non-duplicate IntegrityError (genuine DB failure) is re-raised -> 500."""
     from unittest.mock import MagicMock
-
-    from backend.models.user import User as UserModel
 
     payload = {
         "type": "user.created",
@@ -191,41 +175,45 @@ def test_user_created_unrelated_integrity_error_reraises(app):
     }
     body = json.dumps(payload).encode()
 
-    original_exec = Session.exec
-    exec_call_count = [0]
+    call_count = [0]
 
-    def patched_exec(self: Session, statement, *args, **kwargs):  # type: ignore[misc]
-        exec_call_count[0] += 1
-        if exec_call_count[0] == 1:
-            mock = MagicMock()
-            mock.first.return_value = None
-            return mock
-        return original_exec(self, statement, *args, **kwargs)
+    async def override_get_async_session():
+        async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+        async with async_session_factory() as session:
+            original_execute = session.execute
+            original_flush = session.flush
 
-    # Only raise IntegrityError when User objects are actually pending (the real insert),
-    # not on autoflush calls on a clean session.
-    # No user is pre-inserted, so the recovery re-query returns None → handler re-raises.
-    original_flush = Session.flush
+            async def patched_execute(stmt, *args, **kwargs):
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    # First execute (the "existing" check) returns None
+                    mock_result = MagicMock()
+                    mock_result.scalars.return_value.first.return_value = None
+                    return mock_result
+                return await original_execute(stmt, *args, **kwargs)
 
-    def patched_flush(self: Session) -> None:
-        if any(isinstance(obj, UserModel) for obj in self.new):
-            raise SAIntegrityError(None, None, Exception("foreign key constraint"))
-        return original_flush(self)
+            async def patched_flush(*args, **kwargs):
+                # Check if there are pending User objects
+                if any(isinstance(obj, User) for obj in session.new):
+                    raise SAIntegrityError(None, None, Exception("foreign key constraint"))
+                return await original_flush(*args, **kwargs)
+
+            session.execute = patched_execute
+            session.flush = patched_flush
+            yield session
+
+    app.dependency_overrides[get_async_session] = override_get_async_session
 
     with patch("backend.routers.auth.Webhook") as MockWebhook:
         MockWebhook.return_value.verify.return_value = None
-        with patch.object(Session, "exec", patched_exec):
-            with patch.object(Session, "flush", patched_flush):
-                # raise_server_exceptions=False so unhandled exceptions return 500
-                # instead of being re-raised through the test client.
-                with TestClient(app, raise_server_exceptions=False) as c:
-                    resp = c.post(
-                        "/api/webhooks/clerk/",
-                        content=body,
-                        headers={
-                            **_svix_headers("msg_err_001"),
-                            "Content-Type": "application/json",
-                        },
-                    )
+        with TestClient(app, raise_server_exceptions=False) as c:
+            resp = c.post(
+                "/api/webhooks/clerk/",
+                content=body,
+                headers={
+                    **_svix_headers("msg_err_001"),
+                    "Content-Type": "application/json",
+                },
+            )
 
     assert resp.status_code == 500

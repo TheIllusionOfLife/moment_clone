@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     STRIPE_PRICE_ID_MONTHLY: str = ""
 
     @property
+    def ASYNC_DATABASE_URL(self) -> str:
+        url = self.DATABASE_URL
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
