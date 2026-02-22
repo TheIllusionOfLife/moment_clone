@@ -188,7 +188,7 @@ Without this, `GET /api/sessions/{id}/` and `GET /api/chat/rooms/*/messages/` re
 ## Baked-in constraints
 - **Japanese only** (`ja-JP`): all prompts, TTS (Chirp 3 HD `ja-JP-Chirp3-HD-*`), coaching text
 - **`gemini-3-flash-preview`** for all AI tasks (API identifier; model is Gemini 3 Flash). `gemini-embedding-001` (768-dim) for embeddings. Both via `GEMINI_API_KEY`.
-- **Session limits**: `unique_together=(user_id, dish_id, session_number)` + `CHECK session_number IN (1,2,3)`
+- **Session limits**: `unique_together=(user_id, dish_id, session_number)` for regular dishes (3-session cap enforced in router); free-dish (`slug='free'`) is unlimited — the DB-level `CHECK session_number IN (1,2,3)` was dropped in migration `a008668ec8e0`
 - **Pivot line is fixed**: `"動画を使ってそのポイントを見てみましょう"` always the exact string in `narration_script.pivot`
 - **Status flow**: `pending_upload → uploaded → processing → text_ready → completed` (or `failed`)
 - **Clerk webhook** creates User + ChatRooms on `user.created`; no passwords stored; `clerk_user_id` is the User↔Clerk link
