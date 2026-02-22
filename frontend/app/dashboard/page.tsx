@@ -15,6 +15,23 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
+const DISH_VISUALS: Record<string, { emoji: string; bg: string }> = {
+  "fried-rice": { emoji: "🍳", bg: "bg-amber-50" },
+  "beef-steak": { emoji: "🥩", bg: "bg-red-50" },
+  pomodoro: { emoji: "🍅", bg: "bg-orange-50" },
+};
+
+function DishImage({ slug }: { slug: string }) {
+  const visual = DISH_VISUALS[slug] ?? { emoji: "🍽️", bg: "bg-zinc-50" };
+  return (
+    <div
+      className={`${visual.bg} flex items-center justify-center h-32 text-5xl rounded-t-lg`}
+    >
+      {visual.emoji}
+    </div>
+  );
+}
+
 function ProgressDots({ status }: { status: string }) {
   const filled =
     status === "completed" ? 3 : status === "in_progress" ? 1 : 0;
@@ -58,7 +75,8 @@ export default function DashboardPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           {dishes?.map((dish) => (
-            <Card key={dish.id} className="flex flex-col">
+            <Card key={dish.id} className="flex flex-col overflow-hidden">
+              <DishImage slug={dish.slug} />
               <CardHeader>
                 <CardTitle className="text-lg">{dish.name_ja}</CardTitle>
                 <p className="text-sm text-zinc-500">{dish.name_en}</p>
