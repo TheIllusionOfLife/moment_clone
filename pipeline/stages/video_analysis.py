@@ -58,14 +58,14 @@ def run_video_analysis(session_id: int) -> dict:
         dish_name = session.custom_dish_name or dish.name_ja
         part = types.Part.from_uri(file_uri=uploaded_file.uri, mime_type="video/mp4")
         prompt = (
-            f"あなたは料理コーチです。以下の料理動画を分析して、JSON形式で回答してください。\n"
-            f"料理: {dish_name}\n\n"
+            f"あなたは料理コーチです。この動画に映っている調理の様子をそのまま観察し、JSON形式で回答してください。\n"
+            f"ユーザーが練習しようとしている料理は「{dish_name}」ですが、動画に映っている内容を忠実に分析してください。\n\n"
             f"以下の形式で回答してください:\n"
             f"{{\n"
-            f'  "cooking_events": ["観察した調理イベントのリスト"],\n'
+            f'  "cooking_events": ["動画で実際に観察した調理イベントのリスト（見たままを記述）"],\n'
             f'  "key_moment_timestamp": "最重要ポイントの時刻 (例: 00:02:30)",\n'
             f'  "key_moment_seconds": 150,\n'
-            f'  "diagnosis": "全体的な診断と改善すべき点"\n'
+            f'  "diagnosis": "動画で実際に観察した内容に基づく診断と改善点"\n'
             f"}}"
         )
         response = gemini_client.models.generate_content(
