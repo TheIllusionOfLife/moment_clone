@@ -4,19 +4,25 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const APP_URL = 'https://moment-clone.vercel.app';
-const API_URL = 'https://moment-clone-api-mx6vh55q6q-an.a.run.app';
-const SCREENSHOTS = '/Users/yuyamukai/dev/moment_clone/e2e-screenshots';
-const VIDEO_PATH = path.resolve(__dirname, '../my_cooking_trimmed.mp4');
-const CLERK_SECRET_KEY = 'sk_test_sTpAeaiiNOIPTUu67vkpkFCdXFNiR2goMLqBvUCK7Z';
-const USER_ID = 'user_3A0NGXZ8GGu2F47cWcU6LYgkpgV';
+const APP_URL = process.env.APP_URL ?? 'https://moment-clone.vercel.app';
+const API_URL = process.env.API_URL ?? 'https://moment-clone-api-mx6vh55q6q-an.a.run.app';
+const SCREENSHOTS = process.env.E2E_SCREENSHOTS ?? path.resolve(__dirname, '../e2e-screenshots');
+const VIDEO_PATH = process.env.E2E_VIDEO_PATH ?? path.resolve(__dirname, '../my_cooking_trimmed.mp4');
+const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
+const USER_ID = process.env.CLERK_USER_ID;
 const FAPI = 'allowing-antelope-59.clerk.accounts.dev';
+
+if (!CLERK_SECRET_KEY) throw new Error('CLERK_SECRET_KEY env var is required');
+if (!USER_ID) throw new Error('CLERK_USER_ID env var is required');
 
 async function getTestingToken() {
   const r = await fetch('https://api.clerk.com/v1/testing_tokens', {
     method: 'POST', headers: { 'Authorization': `Bearer ${CLERK_SECRET_KEY}`, 'Content-Type': 'application/json' }
   });
-  return (await r.json()).token;
+  if (!r.ok) throw new Error(`Clerk testing_tokens failed: ${r.status} ${await r.text()}`);
+  const data = await r.json();
+  if (!data.token) throw new Error('Clerk testing_tokens: no token in response');
+  return data.token;
 }
 
 async function getSignInTokenUrl() {
@@ -24,7 +30,10 @@ async function getSignInTokenUrl() {
     method: 'POST', headers: { 'Authorization': `Bearer ${CLERK_SECRET_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: USER_ID, expires_in_seconds: 300 })
   });
-  return (await r.json()).url;
+  if (!r.ok) throw new Error(`Clerk sign_in_tokens failed: ${r.status} ${await r.text()}`);
+  const data = await r.json();
+  if (!data.url) throw new Error('Clerk sign_in_tokens: no url in response');
+  return data.url;
 }
 
 async function authenticate(context) {
@@ -36,8 +45,9 @@ async function authenticate(context) {
   await page.waitForTimeout(2000);
   const vercelCookies = await context.cookies([APP_URL]);
   const dvbCookie = vercelCookies.find(c => c.name === '__clerk_db_jwt');
-  const vercelDvbJwt = dvbCookie?.value;
-  console.log('  Vercel dvb JWT:', vercelDvbJwt?.slice(0, 20) + '...');
+  if (!dvbCookie) throw new Error('No __clerk_db_jwt cookie found on Vercel domain');
+  const vercelDvbJwt = dvbCookie.value;
+  console.log('  Vercel dvb JWT:', vercelDvbJwt.slice(0, 20) + '...');
 
   await context.route(`https://${FAPI}/v1/**`, async route => {
     const url = new URL(route.request().url());
@@ -65,15 +75,14 @@ async function screenshot(page, name, label) {
   console.log(`  📸 ${label} → ${name}.png`);
 }
 
-// Poll session status directly via API (faster than waiting for UI)
-async function pollSession(page, sessionId) {
-  const apiResult = await page.evaluate(async ({ apiUrl, sid }) => {
-    try {
-      const r = await fetch(`${apiUrl}/api/sessions/${sid}/`);
-      return await r.json();
-    } catch (e) { return { error: e.message }; }
-  }, { apiUrl: API_URL, sid: sessionId });
-  return apiResult;
+// Poll session status directly via Node.js fetch (avoids browser proxy limits and passes auth)
+async function pollSession(sessionId, token) {
+  try {
+    const r = await fetch(`${API_URL}/api/sessions/${sessionId}/`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    return await r.json();
+  } catch (e) { return { error: e.message }; }
 }
 
 (async () => {
@@ -160,7 +169,7 @@ async function pollSession(page, sessionId) {
   let lastStatus = '';
 
   for (let i = 0; i < MAX_POLLS; i++) {
-    const session = await pollSession(page, sessionId);
+    const session = await pollSession(sessionId, token);
     const status = session?.status ?? 'unknown';
 
     if (status !== lastStatus) {

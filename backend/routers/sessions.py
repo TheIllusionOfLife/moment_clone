@@ -61,7 +61,7 @@ class RatingsRequest(BaseModel):
 
 
 class MemoTextRequest(BaseModel):
-    text: str
+    text: str = Field(min_length=1)
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +241,7 @@ async def save_memo_text(
 ) -> dict:
     """Accept a typed self-assessment text instead of a voice memo file."""
     owned_session.voice_transcript = body.text.strip()
+    owned_session.updated_at = datetime.now(UTC)
     db.add(owned_session)
     await db.commit()
     await db.refresh(owned_session)

@@ -167,6 +167,14 @@ def test_save_memo_text_strips_whitespace(client, cooking_session):
     assert resp.json()["voice_transcript"] == "スペースあり"
 
 
+def test_save_memo_text_empty_string_rejected(client, cooking_session):
+    resp = client.post(
+        f"/api/sessions/{cooking_session.id}/memo-text/",
+        json={"text": ""},
+    )
+    assert resp.status_code == 422
+
+
 def test_save_memo_text_wrong_owner_returns_404(other_client, cooking_session):
     resp = other_client.post(
         f"/api/sessions/{cooking_session.id}/memo-text/",
@@ -184,7 +192,13 @@ def test_save_memo_text_wrong_owner_returns_404(other_client, cooking_session):
 def free_dish(db):
     from backend.models.dish import Dish
 
-    d = Dish(slug="free", name_ja="自由投稿", name_en="Free Choice", description_ja="好きな料理", order=99)
+    d = Dish(
+        slug="free",
+        name_ja="自由投稿",
+        name_en="Free Choice",
+        description_ja="好きな料理",
+        order=99,
+    )
     db.add(d)
     db.commit()
     db.refresh(d)

@@ -284,7 +284,7 @@ Triggered by Inngest event (`video/uploaded`) after upload completes. The pipeli
 Two input paths — both produce the same output contract:
 
 **Path A — Audio file** (`voice_memo_url` is set):
-```
+```text
 Step 1 — STT
   Google Cloud Speech-to-Text → voice_transcript (ja-JP)
 
@@ -295,7 +295,7 @@ Step 2 — Gemini entity extraction
 ```
 
 **Path B — Typed text** (`voice_transcript` already set via `POST /memo-text/`, no audio file):
-```
+```text
 Skip STT entirely.
 Run Gemini entity extraction directly on the typed text → structured_input JSON.
 ```

@@ -219,7 +219,7 @@ export default function NewSessionPage() {
 
         <Button
           className="w-full"
-          disabled={!videoFile || uploading}
+          disabled={!videoFile || uploading || (isFree(slug) && !customDishName.trim())}
           onClick={handleUpload}
         >
           {uploading

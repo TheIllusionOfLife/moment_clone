@@ -93,7 +93,7 @@ Clerk's development instance uses cross-domain `dvb_` (dev_browser) JWTs. A head
 
 ### Solution: share Vercel's `dvb_` JWT with accounts.dev
 
-```
+```text
 frontend/clerk_login.mjs   # standalone auth helper (saves session to /tmp/clerk_session.json)
 frontend/clerk_e2e.mjs     # full E2E screenshot run (all 6 pages)
 ```

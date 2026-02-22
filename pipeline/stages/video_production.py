@@ -176,11 +176,14 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
         )
 
         # Step 5: Compose key-moment segment (clip + part2 audio).
-        # Explicit -map prevents FFmpeg selecting the original video audio over narration.
-        # -t limits to narration length; -shortest is removed to avoid cutting narration.
+        # -stream_loop -1 loops the clip so short source videos don't end before
+        # the narration finishes.  -t limits output to exactly part2_duration.
+        # Explicit -map prevents FFmpeg selecting original video audio over narration.
         part2_duration = _get_audio_duration(part2_audio_path)
         _run_ffmpeg(
             [
+                "-stream_loop",
+                "-1",
                 "-i",
                 key_moment_clip_path,
                 "-i",

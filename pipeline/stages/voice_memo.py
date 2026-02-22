@@ -36,7 +36,7 @@ def run_voice_memo(session_id: int) -> dict:
         )
         try:
             structured_input = _parse_json_response(gemini_response.text or "")
-        except Exception:
+        except ValueError:
             structured_input = {}
         update_session_fields(session_id, structured_input=structured_input)
         return {"voice_transcript": transcript, "structured_input": structured_input}
@@ -82,7 +82,7 @@ def run_voice_memo(session_id: int) -> dict:
 
     try:
         structured_input = _parse_json_response(gemini_response.text or "")
-    except Exception:
+    except ValueError:
         structured_input = {}
 
     update_session_fields(

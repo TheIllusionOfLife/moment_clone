@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import timedelta
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 import google.auth  # type: ignore[import-untyped]
 import google.auth.transport.requests  # type: ignore[import-untyped]
@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 # Singleton client — initialized once, reused across all calls.
 # ADC (Application Default Credentials) are resolved at first use.
 _gcs_client: storage.Client | None = None
+
+# Cached signing credentials — refreshed only when the token has expired.
+_signing_credentials: Any = None
 
 
 def _get_client() -> storage.Client:
@@ -33,13 +36,19 @@ def _get_signing_credentials() -> tuple[str, str]:
     google.auth.default() returns ServiceAccountCredentials, which DO have a private
     key — but generate_signed_url() ignores the extra kwargs when a signer is already
     present, so the same code path works everywhere.
+
+    Credentials are cached at module level and only refreshed when expired,
+    avoiding a metadata-server round-trip on every signed URL call.
     """
-    credentials, _ = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
-    credentials.refresh(google.auth.transport.requests.Request())
-    sa_email: str = getattr(credentials, "service_account_email", "")
-    token: str = getattr(credentials, "token", "")
+    global _signing_credentials
+    if _signing_credentials is None:
+        _signing_credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+    if not _signing_credentials.valid:
+        _signing_credentials.refresh(google.auth.transport.requests.Request())
+    sa_email: str = getattr(_signing_credentials, "service_account_email", "")
+    token: str = getattr(_signing_credentials, "token", "")
     return sa_email, token
 
 
@@ -86,7 +95,7 @@ async def generate_signed_url(
         try:
             sa_email, access_token = _get_signing_credentials()
             blob = _get_client().bucket(bucket).blob(object_path)
-            kwargs: dict = dict(
+            kwargs: dict[str, Any] = dict(
                 expiration=timedelta(days=expiry_days),
                 method="GET",
                 version="v4",
