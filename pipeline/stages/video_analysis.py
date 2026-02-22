@@ -1,6 +1,7 @@
 """Stage 1 — Video analysis via Gemini multimodal structured prompt."""
 
 import tempfile
+import time
 
 from google import genai
 from google.cloud import storage  # type: ignore[attr-defined]
@@ -40,6 +41,19 @@ def run_video_analysis(session_id: int) -> dict:
         raise RuntimeError("Gemini file upload returned no URI")
     if uploaded_file.name is None:
         raise RuntimeError("Gemini file upload returned no name")
+
+    # Wait for the file to become ACTIVE (video processing can take a few seconds)
+    for _ in range(30):
+        file_info = gemini_client.files.get(name=uploaded_file.name)
+        state = getattr(file_info.state, "name", str(file_info.state))
+        if state == "ACTIVE":
+            break
+        if state == "FAILED":
+            raise RuntimeError(f"Gemini file processing failed: {file_info.name}")
+        time.sleep(2)
+    else:
+        raise RuntimeError("Gemini file did not become ACTIVE within 60 seconds")
+
     try:
         part = types.Part.from_uri(file_uri=uploaded_file.uri, mime_type="video/mp4")
         prompt = (
