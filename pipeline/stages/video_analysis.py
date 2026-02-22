@@ -34,7 +34,7 @@ def run_video_analysis(session_id: int) -> dict:
 
         # Upload to Gemini File API
         gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        uploaded_file = gemini_client.files.upload(tmp_video_path)  # type: ignore[misc]
+        uploaded_file = gemini_client.files.upload(file=tmp_video_path)  # type: ignore[misc]
 
     if uploaded_file.uri is None:
         raise RuntimeError("Gemini file upload returned no URI")
