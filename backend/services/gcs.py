@@ -1,10 +1,13 @@
 import asyncio
+import logging
 from datetime import timedelta
 from typing import BinaryIO
 
 import google.auth  # type: ignore[import-untyped]
 import google.auth.transport.requests  # type: ignore[import-untyped]
 from google.cloud import storage  # type: ignore[attr-defined]
+
+logger = logging.getLogger(__name__)
 
 # Singleton client — initialized once, reused across all calls.
 # ADC (Application Default Credentials) are resolved at first use.
@@ -65,8 +68,12 @@ async def generate_signed_url(
     bucket: str,
     object_path: str,
     expiry_days: int = 7,
-) -> str:
+) -> str | None:
     """Generate a v4 signed URL for reading a GCS object (runs in thread pool).
+
+    Returns None (instead of raising) if signing fails so callers can surface
+    a missing URL rather than crashing the entire request with a 500 that would
+    strip CORS headers from the error response.
 
     The IAM signBlob round-trip is blocking; offload to a thread to avoid
     stalling the event loop. Requires the runtime service account to have the
@@ -75,17 +82,21 @@ async def generate_signed_url(
     for local development.
     """
 
-    def _sync_sign() -> str:
-        sa_email, access_token = _get_signing_credentials()
-        blob = _get_client().bucket(bucket).blob(object_path)
-        kwargs: dict = dict(
-            expiration=timedelta(days=expiry_days),
-            method="GET",
-            version="v4",
-        )
-        if sa_email and access_token:
-            kwargs["service_account_email"] = sa_email
-            kwargs["access_token"] = access_token
-        return blob.generate_signed_url(**kwargs)
+    def _sync_sign() -> str | None:
+        try:
+            sa_email, access_token = _get_signing_credentials()
+            blob = _get_client().bucket(bucket).blob(object_path)
+            kwargs: dict = dict(
+                expiration=timedelta(days=expiry_days),
+                method="GET",
+                version="v4",
+            )
+            if sa_email and access_token:
+                kwargs["service_account_email"] = sa_email
+                kwargs["access_token"] = access_token
+            return blob.generate_signed_url(**kwargs)
+        except Exception as exc:
+            logger.warning("GCS signed URL failed for %s/%s: %s", bucket, object_path, exc)
+            return None
 
     return await asyncio.to_thread(_sync_sign)
