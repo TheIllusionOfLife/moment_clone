@@ -1,5 +1,6 @@
 from typing import BinaryIO
 
+
 def validate_video_signature(file_obj: BinaryIO) -> bool:
     """Validate video file signature (magic bytes).
 
