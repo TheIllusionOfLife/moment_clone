@@ -13,7 +13,7 @@ Stages:
 """
 
 import asyncio
-import traceback
+import logging
 
 import inngest
 
@@ -24,6 +24,8 @@ from pipeline.stages.rag import run_rag
 from pipeline.stages.video_analysis import run_video_analysis
 from pipeline.stages.video_production import run_video_production
 from pipeline.stages.voice_memo import run_voice_memo
+
+logger = logging.getLogger(__name__)
 
 
 @inngest_client.create_function(  # type: ignore[arg-type, return-value]
@@ -70,9 +72,7 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
         try:
             return await asyncio.to_thread(_check_and_set_processing_sync)
         except Exception:
-            print(
-                f"PIPELINE ERROR [session={session_id}] check-and-set-processing:\n{traceback.format_exc()}"
-            )
+            logger.exception("PIPELINE ERROR [session=%s] check-and-set-processing", session_id)
             raise
 
     should_proceed: bool = await step.run("check-and-set-processing", _check_and_set_processing)  # type: ignore[arg-type, assignment]
@@ -89,13 +89,19 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
             cooking_session = db.get(CookingSession, session_id)
             if cooking_session:
                 cooking_session.status = new_status
-                if error:
-                    cooking_session.pipeline_error = error
+                # Always overwrite pipeline_error: set message on failure, clear on success.
+                cooking_session.pipeline_error = error or ""
                 db.add(cooking_session)
                 db.commit()
 
     async def _set_terminal_status(new_status: str, error: str | None = None) -> None:
-        await asyncio.to_thread(_set_terminal_status_sync, new_status, error)
+        try:
+            await asyncio.to_thread(_set_terminal_status_sync, new_status, error)
+        except Exception:
+            logger.exception(
+                "PIPELINE ERROR [session=%s] set-terminal-status(%s)", session_id, new_status
+            )
+            raise
 
     try:
         # Stage 0 — Voice memo (optional, runs if voice_memo_url is set)
@@ -139,9 +145,7 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
             lambda: _set_terminal_status("completed"),  # type: ignore[arg-type, return-value]
         )
     except Exception as exc:
-        print(
-            f"PIPELINE ERROR [session={session_id}] {type(exc).__name__}: {exc}\n{traceback.format_exc()}"
-        )
+        logger.exception("PIPELINE ERROR [session=%s] %s: %s", session_id, type(exc).__name__, exc)
         error_msg = str(exc)
         await step.run(
             "mark-failed",
