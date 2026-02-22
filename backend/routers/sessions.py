@@ -9,6 +9,7 @@ from sqlmodel import col, select
 
 from backend.core.auth import get_current_user
 from backend.core.database import get_async_session
+from backend.core.security import validate_video_signature
 from backend.core.settings import settings
 from backend.models.dish import Dish
 from backend.models.session import CookingSession
@@ -160,6 +161,13 @@ async def upload_video(
 
     # Seek back so GCS can read from the start via the underlying SpooledTemporaryFile.
     await video.seek(0)
+
+    # Validate file signature (magic bytes) to prevent non-video uploads
+    if not validate_video_signature(video.file):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid video format: missing ftyp signature",
+        )
 
     object_path = f"sessions/{owned_session.id}/raw_video_{uuid.uuid4().hex}.mp4"
     gcs_path = await upload_file(
