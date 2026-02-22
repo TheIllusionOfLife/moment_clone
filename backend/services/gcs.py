@@ -2,6 +2,8 @@ import asyncio
 from datetime import timedelta
 from typing import BinaryIO
 
+import google.auth  # type: ignore[import-untyped]
+import google.auth.transport.requests  # type: ignore[import-untyped]
 from google.cloud import storage  # type: ignore[attr-defined]
 
 # Singleton client — initialized once, reused across all calls.
@@ -14,6 +16,28 @@ def _get_client() -> storage.Client:
     if _gcs_client is None:
         _gcs_client = storage.Client()
     return _gcs_client
+
+
+def _get_signing_credentials() -> tuple[str, str]:
+    """Return (service_account_email, access_token) for signed URL generation.
+
+    On Cloud Run the runtime credentials are Compute Engine credentials that
+    don't carry a private key, so we can't sign locally.  Instead we pass the
+    SA email + a fresh access token to generate_signed_url(), which makes the
+    SDK delegate signing to the IAM signBlob API.
+
+    For local development with a service-account key file (GOOGLE_APPLICATION_CREDENTIALS)
+    google.auth.default() returns ServiceAccountCredentials, which DO have a private
+    key — but generate_signed_url() ignores the extra kwargs when a signer is already
+    present, so the same code path works everywhere.
+    """
+    credentials, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    credentials.refresh(google.auth.transport.requests.Request())
+    sa_email: str = getattr(credentials, "service_account_email", "")
+    token: str = getattr(credentials, "token", "")
+    return sa_email, token
 
 
 async def upload_file(
@@ -52,11 +76,16 @@ async def generate_signed_url(
     """
 
     def _sync_sign() -> str:
+        sa_email, access_token = _get_signing_credentials()
         blob = _get_client().bucket(bucket).blob(object_path)
-        return blob.generate_signed_url(
+        kwargs: dict = dict(
             expiration=timedelta(days=expiry_days),
             method="GET",
             version="v4",
         )
+        if sa_email and access_token:
+            kwargs["service_account_email"] = sa_email
+            kwargs["access_token"] = access_token
+        return blob.generate_signed_url(**kwargs)
 
     return await asyncio.to_thread(_sync_sign)
