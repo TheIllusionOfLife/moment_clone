@@ -20,6 +20,7 @@ e2e-screenshots/
 frontend/.playwright-cli/
 my_cooking_full.mp4
 my_cooking_short.mp4
+my_cooking_trimmed.mp4
 
 # IDE / AI tools
 .agent/
