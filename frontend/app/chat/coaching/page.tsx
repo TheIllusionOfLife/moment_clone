@@ -32,6 +32,20 @@ export default function CoachingChatPage() {
     }
   }, [messages, waitingForReply]);
 
+  // Auto-scroll whenever messages change (handles both optimistic user msgs and AI replies)
+  useEffect(() => {
+    if (messages.length > 0) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length]);
+
+  // Safety timeout: clear waitingForReply after 30s if AI never responds
+  useEffect(() => {
+    if (!waitingForReply) return;
+    const id = setTimeout(() => setWaitingForReply(false), 30_000);
+    return () => clearTimeout(id);
+  }, [waitingForReply]);
+
   const sendMutation = useMutation({
     mutationFn: (text: string) =>
       apiFetch<Message>("/api/chat/rooms/coaching/messages/", {
@@ -59,16 +73,13 @@ export default function CoachingChatPage() {
       );
       setInput("");
       setWaitingForReply(true);
-      setTimeout(
-        () => bottomRef.current?.scrollIntoView({ behavior: "smooth" }),
-        100,
-      );
-      return { previous };
+      return { previous, text };
     },
-    onError: (_err, _text, context) => {
+    onError: (_err, text, context) => {
       if (context?.previous) {
         queryClient.setQueryData(["messages", "coaching"], context.previous);
       }
+      setInput(text);
       setWaitingForReply(false);
     },
     onSettled: () => {
@@ -128,6 +139,7 @@ export default function CoachingChatPage() {
 
       <div className="flex gap-2 items-end">
         <Textarea
+          aria-label="メッセージ入力"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="質問や感想を入力..."
