@@ -55,10 +55,11 @@ def run_video_analysis(session_id: int) -> dict:
         raise RuntimeError("Gemini file did not become ACTIVE within 60 seconds")
 
     try:
+        dish_name = session.custom_dish_name or dish.name_ja
         part = types.Part.from_uri(file_uri=uploaded_file.uri, mime_type="video/mp4")
         prompt = (
             f"あなたは料理コーチです。以下の料理動画を分析して、JSON形式で回答してください。\n"
-            f"料理: {dish.name_ja}\n\n"
+            f"料理: {dish_name}\n\n"
             f"以下の形式で回答してください:\n"
             f"{{\n"
             f'  "cooking_events": ["観察した調理イベントのリスト"],\n'

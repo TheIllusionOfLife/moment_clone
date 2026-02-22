@@ -20,6 +20,9 @@ class CookingSession(SQLModel, table=True):
     dish_id: int = Field(foreign_key="dish.id")
     session_number: int  # 1, 2, or 3 — CHECK constraint already in Supabase
 
+    # For free-choice dish: user-supplied dish name stored with the session
+    custom_dish_name: str | None = None
+
     # User input
     raw_video_url: str = Field(default="")
     voice_memo_url: str | None = None

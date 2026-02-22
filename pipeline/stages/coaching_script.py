@@ -47,10 +47,11 @@ def _build_prompt(session, dish, retrieved_context: dict, ls: LearnerState) -> s
     video_analysis = session.video_analysis or {}
     structured_input = session.structured_input or {}
 
+    dish_name = session.custom_dish_name or dish.name_ja
     return f"""あなたは料理コーチです。以下の情報をもとに、日本語でコーチングテキストを生成してください。
 
 ## 料理情報
-料理名: {dish.name_ja}
+料理名: {dish_name}
 料理の説明: {dish.description_ja}
 料理の原則: {", ".join(str(p) for p in (dish.principles or []))}
 

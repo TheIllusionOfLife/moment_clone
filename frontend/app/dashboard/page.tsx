@@ -19,6 +19,7 @@ const DISH_VISUALS: Record<string, { emoji: string; bg: string }> = {
   "fried-rice": { emoji: "🍳", bg: "bg-amber-50" },
   "beef-steak": { emoji: "🥩", bg: "bg-red-50" },
   pomodoro: { emoji: "🍅", bg: "bg-orange-50" },
+  free: { emoji: "🍽️", bg: "bg-zinc-50" },
 };
 
 function DishImage({ slug }: { slug: string }) {
@@ -85,12 +86,15 @@ export default function DashboardPage() {
                 <p className="text-sm text-zinc-600">
                   {dish.description_ja}
                 </p>
-                <div className="mt-3">
-                  <ProgressDots status={dish.progress.status} />
-                </div>
+                {dish.slug !== "free" && (
+                  <div className="mt-3">
+                    <ProgressDots status={dish.progress.status} />
+                  </div>
+                )}
               </CardContent>
               <CardFooter>
-                {dish.progress.status === "completed" ? (
+                {dish.slug !== "free" &&
+                dish.progress.status === "completed" ? (
                   <Badge
                     variant="secondary"
                     className="w-full justify-center py-1"
@@ -100,9 +104,11 @@ export default function DashboardPage() {
                 ) : (
                   <Button asChild className="w-full" size="sm">
                     <Link href={`/dishes/${dish.slug}`}>
-                      {dish.progress.status === "not_started"
-                        ? "はじめる"
-                        : "続ける"}
+                      {dish.slug === "free"
+                        ? "投稿する"
+                        : dish.progress.status === "not_started"
+                          ? "はじめる"
+                          : "続ける"}
                     </Link>
                   </Button>
                 )}

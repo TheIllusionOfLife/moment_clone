@@ -48,6 +48,7 @@ export interface CookingSession {
   user_id: number;
   dish_id: number;
   session_number: number;
+  custom_dish_name: string | null;
   status: SessionStatus;
   raw_video_url: string | null;
   voice_memo_url: string | null;
