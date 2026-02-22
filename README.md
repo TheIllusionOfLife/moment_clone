@@ -230,14 +230,27 @@ Coaching text is delivered first (~2–3 min), video follows (~5–10 min).
 User uploads video
     → POST /api/sessions/{id}/upload/ → GCS
     → inngest_client.send("video/uploaded") → Inngest durable pipeline
-    → Stage 0: Voice memo STT + entity extraction (optional)
+    → Stage 0: Self-assessment extraction (optional)
+         Path A: audio file → Google STT → Gemini entity extraction
+         Path B: typed text (POST /memo-text/) → Gemini entity extraction (STT skipped)
     → Stage 1: Video analysis (Gemini — structured single-agent)
     → Stage 2: RAG retrieval (Supabase pgvector)
     → Stage 3a: Coaching text generated → posted to Coaching chat (~2–3 min)
     → Stage 3b: Narration script generated
     → Stage 4: TTS + FFmpeg video composition → GCS
+         Intro: cooking footage looped with narration (not a black screen)
+         Highlight: 15-second clip at key_moment_seconds with part2 narration
     → Coaching video posted to Coaching chat (~5–10 min)
 ```
+
+### Dishes
+
+| Slug | Name | Sessions |
+|---|---|---|
+| `fried-rice` | チャーハン | max 3 |
+| `beef-steak` | ビーフステーキ | max 3 |
+| `pomodoro` | ポモドーロ | max 3 |
+| `free` | 自由投稿 | unlimited (custom dish name per session) |
 
 See [`docs/design.md`](docs/design.md) for the full pipeline specification.
 

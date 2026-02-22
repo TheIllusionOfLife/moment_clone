@@ -68,12 +68,13 @@ class User(SQLModel, table=True):
 ```python
 class Dish(SQLModel, table=True):
     id:              Optional[int] = Field(default=None, primary_key=True)
-    slug:            str = Field(unique=True, index=True)  # "fried-rice", "beef-steak", "pomodoro"
-    name_ja:         str = Field(max_length=100)           # "チャーハン"
+    slug:            str = Field(unique=True, index=True)
+    # "fried-rice" | "beef-steak" | "pomodoro" | "free" (自由投稿 — free-choice, unlimited sessions)
+    name_ja:         str = Field(max_length=100)           # "チャーハン", "自由投稿"
     name_en:         str = Field(max_length=100)
     description_ja:  str
     principles:      list = Field(default_factory=list, sa_column=Column(JSON))
-    # ["moisture_control", "heat_management", "oil_coating"]
+    # Japanese strings: ["水分管理", "ヒートマネジメント（火加減）", "油コーティング"]
     transferable_to: list = Field(default_factory=list, sa_column=Column(JSON))
     # ["minestrone", "ratatouille"]
     month_unlocked:  int = Field(default=1)                # 1 = starter dishes
@@ -97,25 +98,27 @@ class UserDishProgress(SQLModel, table=True):
 ### Session
 ```python
 class Session(SQLModel, table=True):
-    """One cook of one dish = one session. Max 3 per dish."""
-    __table_args__ = (
-        UniqueConstraint("user_id", "dish_id", "session_number"),
-        CheckConstraint("session_number IN (1, 2, 3)", name="session_number_1_to_3"),
-    )
+    """One cook of one dish = one session.
+    Max 3 per dish (enforced in application code). No cap for slug='free'."""
+    __table_args__ = (UniqueConstraint("user_id", "dish_id", "session_number"),)
 
     id:              Optional[int] = Field(default=None, primary_key=True)
     user_id:         int = Field(foreign_key="user.id", index=True)
     dish_id:         int = Field(foreign_key="dish.id")
-    session_number:  int                                # 1, 2, or 3
+    session_number:  int                                # 1, 2, 3 … (unbounded for free dish)
+
+    # For slug='free': user-supplied dish name stored on the session and used in all Gemini prompts
+    custom_dish_name: Optional[str] = None              # e.g. "鶏の唐揚げ"
 
     # User input
     raw_video_url:       str = Field(default="")        # GCS path — blank until upload completes
-    voice_memo_url:      Optional[str] = None           # GCS path to user's voice self-assessment
+    voice_memo_url:      Optional[str] = None           # GCS path to audio self-assessment (optional)
     self_ratings:        dict = Field(default_factory=dict, sa_column=Column(JSON))
     # { "appearance": 3, "taste": 4, "texture": 2, "aroma": 3 }
-    voice_transcript:    str = Field(default="")        # STT output of voice memo
+    voice_transcript:    str = Field(default="")
+    # Set by STT (audio path) OR by POST /memo-text/ (typed text path)
     structured_input:    dict = Field(default_factory=dict, sa_column=Column(JSON))
-    # { "identified_issues": [...], "questions": [...], "emotional_state": "..." }
+    # { "taste": 4, "appearance": 3, "texture": 4, "aroma": 5, "self_assessment": "..." }
 
     # Pipeline state
     status:              str = Field(default="pending_upload")
@@ -243,10 +246,16 @@ GET    /api/dishes/{slug}/       → dish detail + user progress
 ### Sessions
 ```
 GET    /api/sessions/?dish_slug={slug}   → list sessions for a dish (current user only)
-POST   /api/sessions/                    → create session, get upload URL
-POST   /api/sessions/{id}/upload/        → upload raw video → GCS → set status="uploaded" → trigger pipeline
-POST   /api/sessions/{id}/voice-memo/    → upload voice memo → GCS
-PATCH  /api/sessions/{id}/ratings/       → save self-assessment ratings
+POST   /api/sessions/                    → create session
+                                           body: { dish_slug, custom_dish_name? }
+                                           custom_dish_name required when dish_slug="free"
+                                           free dish: no session cap (unlimited)
+POST   /api/sessions/{id}/upload/        → upload raw video → GCS → status="uploaded" → trigger pipeline
+POST   /api/sessions/{id}/voice-memo/    → upload audio self-assessment → GCS (optional)
+POST   /api/sessions/{id}/memo-text/     → save typed self-assessment text
+                                           body: { text: string }
+                                           alternative to voice-memo; sets voice_transcript directly
+PATCH  /api/sessions/{id}/ratings/       → save self-assessment star ratings (1–5 per dimension)
 GET    /api/sessions/{id}/               → session detail + coaching output
 ```
 
@@ -272,19 +281,26 @@ Triggered by Inngest event (`video/uploaded`) after upload completes. The pipeli
 
 ### Stage 0 — Voice Memo Processing (pre-pipeline, optional)
 
-If `voice_memo_url` is set, run before the main pipeline stages:
+Two input paths — both produce the same output contract:
 
+**Path A — Audio file** (`voice_memo_url` is set):
 ```
 Step 1 — STT
   Google Cloud Speech-to-Text → voice_transcript (ja-JP)
-  Fallback: if no voice memo, voice_transcript = ""
 
-Step 2 — Entity extraction
-  Gemini prompt: "Extract from this cooking self-assessment transcript:
-    identified_issues (list), questions (list), emotional_state (string)"
-  → structured_input JSON
-  Fallback: if transcript empty, structured_input = {}
+Step 2 — Gemini entity extraction
+  Input: voice_transcript
+  Output: structured_input JSON
+  { "taste": 4, "appearance": 3, "texture": 4, "aroma": 5, "self_assessment": "..." }
 ```
+
+**Path B — Typed text** (`voice_transcript` already set via `POST /memo-text/`, no audio file):
+```
+Skip STT entirely.
+Run Gemini entity extraction directly on the typed text → structured_input JSON.
+```
+
+**Fallback**: if both `voice_memo_url` and `voice_transcript` are empty → return `{voice_transcript: "", structured_input: {}}` immediately.
 
 **Output**: `session.voice_transcript`, `session.structured_input`
 

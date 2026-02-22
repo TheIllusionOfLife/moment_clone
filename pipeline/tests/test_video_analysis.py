@@ -7,12 +7,13 @@ import pytest
 from pipeline.stages.video_analysis import run_video_analysis
 
 
-def _make_session(raw_video_url="sessions/1/raw.mp4"):
+def _make_session(raw_video_url="sessions/1/raw.mp4", custom_dish_name=None):
     class FakeSession:
         id = 1
 
     obj = FakeSession()
     obj.raw_video_url = raw_video_url
+    obj.custom_dish_name = custom_dish_name
     return obj
 
 
@@ -47,12 +48,18 @@ def _mock_gemini(mocker, response_text: str):
     mock_uploaded_file.uri = "https://generativelanguage.googleapis.com/v1beta/files/abc123"
     mock_uploaded_file.name = "files/abc123"
 
+    # Simulate file becoming ACTIVE immediately
+    mock_file_info = mocker.MagicMock()
+    mock_file_info.state.name = "ACTIVE"
+
     mock_gemini_client = mocker.MagicMock()
     mock_gemini_client.return_value.files.upload.return_value = mock_uploaded_file
+    mock_gemini_client.return_value.files.get.return_value = mock_file_info
     mock_gemini_client.return_value.models.generate_content.return_value = mocker.MagicMock(
         text=response_text
     )
     mocker.patch("pipeline.stages.video_analysis.genai.Client", mock_gemini_client)
+    mocker.patch("pipeline.stages.video_analysis.time.sleep")
     return mock_gemini_client
 
 
@@ -92,12 +99,17 @@ class TestFinallyCleanup:
         mock_uploaded_file.uri = "https://generativelanguage.googleapis.com/v1beta/files/abc123"
         mock_uploaded_file.name = "files/abc123"
 
+        mock_file_info = mocker.MagicMock()
+        mock_file_info.state.name = "ACTIVE"
+
         mock_gemini_client = mocker.MagicMock()
         mock_gemini_client.return_value.files.upload.return_value = mock_uploaded_file
+        mock_gemini_client.return_value.files.get.return_value = mock_file_info
         mock_gemini_client.return_value.models.generate_content.side_effect = RuntimeError(
             "API timeout"
         )
         mocker.patch("pipeline.stages.video_analysis.genai.Client", mock_gemini_client)
+        mocker.patch("pipeline.stages.video_analysis.time.sleep")
 
         with pytest.raises(RuntimeError, match="API timeout"):
             run_video_analysis(1)

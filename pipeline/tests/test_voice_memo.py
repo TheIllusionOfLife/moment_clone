@@ -3,15 +3,15 @@
 from pipeline.stages.voice_memo import run_voice_memo
 
 
-def _make_session(voice_memo_url=None):
+def _make_session(voice_memo_url=None, voice_transcript=""):
     """Return a minimal fake CookingSession-like object."""
 
     class FakeSession:
         id = 1
-        voice_memo_url = None
 
     obj = FakeSession()
     obj.voice_memo_url = voice_memo_url
+    obj.voice_transcript = voice_transcript
     return obj
 
 
@@ -25,7 +25,7 @@ def _make_dish():
 
 class TestEarlyReturn:
     def test_early_return_when_no_voice_memo(self, mocker):
-        """Session with voice_memo_url=None returns empty result immediately."""
+        """Session with voice_memo_url=None and no transcript returns empty result immediately."""
         mocker.patch(
             "pipeline.stages.voice_memo.get_session_with_dish",
             return_value=(_make_session(voice_memo_url=None), _make_dish()),
@@ -38,7 +38,7 @@ class TestEarlyReturn:
         update_mock.assert_not_called()
 
     def test_early_return_when_empty_voice_memo(self, mocker):
-        """Session with voice_memo_url='' returns empty result immediately."""
+        """Session with voice_memo_url='' and no transcript returns empty result immediately."""
         mocker.patch(
             "pipeline.stages.voice_memo.get_session_with_dish",
             return_value=(_make_session(voice_memo_url=""), _make_dish()),
@@ -49,6 +49,68 @@ class TestEarlyReturn:
 
         assert result == {"voice_transcript": "", "structured_input": {}}
         update_mock.assert_not_called()
+
+
+class TestTextTranscriptPath:
+    """When voice_transcript is pre-filled (via memo-text endpoint) and no audio file,
+    stage 0 skips STT and runs Gemini extraction directly on the typed text."""
+
+    def _make_session_with_text(self, text: str):
+        class FakeSession:
+            id = 1
+            voice_memo_url = None
+            voice_transcript = text
+
+        return FakeSession()
+
+    def test_text_path_skips_stt_calls_gemini(self, mocker):
+        """Pre-filled transcript triggers Gemini extraction; GCS and STT are never called."""
+        session = self._make_session_with_text("今日は火加減が難しかったです。味は4点くらい。")
+        mocker.patch(
+            "pipeline.stages.voice_memo.get_session_with_dish",
+            return_value=(session, _make_dish()),
+        )
+        update_mock = mocker.patch("pipeline.stages.voice_memo.update_session_fields")
+        gcs_mock = mocker.patch("pipeline.stages.voice_memo.storage.Client")
+
+        structured = {"taste": 4, "appearance": 3, "texture": 3, "aroma": 3, "self_assessment": "難しかった"}
+        mock_gemini_response = mocker.MagicMock()
+        mock_gemini_response.text = (
+            '{"taste": 4, "appearance": 3, "texture": 3, "aroma": 3, "self_assessment": "難しかった"}'
+        )
+        mock_gemini_client = mocker.MagicMock()
+        mock_gemini_client.return_value.models.generate_content.return_value = mock_gemini_response
+        mocker.patch("pipeline.stages.voice_memo.genai.Client", mock_gemini_client)
+
+        result = run_voice_memo(1)
+
+        assert result["voice_transcript"] == "今日は火加減が難しかったです。味は4点くらい。"
+        assert result["structured_input"] == structured
+        # GCS / STT must not be called in the text path
+        gcs_mock.assert_not_called()
+        update_mock.assert_called_once_with(1, structured_input=structured)
+
+    def test_text_path_gemini_parse_error_returns_empty_structured(self, mocker):
+        """Non-JSON Gemini response on text path defaults structured_input to {}."""
+        session = self._make_session_with_text("適当なコメント")
+        mocker.patch(
+            "pipeline.stages.voice_memo.get_session_with_dish",
+            return_value=(session, _make_dish()),
+        )
+        update_mock = mocker.patch("pipeline.stages.voice_memo.update_session_fields")
+        mocker.patch("pipeline.stages.voice_memo.storage.Client")
+
+        mock_gemini_response = mocker.MagicMock()
+        mock_gemini_response.text = "not json"
+        mock_gemini_client = mocker.MagicMock()
+        mock_gemini_client.return_value.models.generate_content.return_value = mock_gemini_response
+        mocker.patch("pipeline.stages.voice_memo.genai.Client", mock_gemini_client)
+
+        result = run_voice_memo(1)
+
+        assert result["voice_transcript"] == "適当なコメント"
+        assert result["structured_input"] == {}
+        update_mock.assert_called_once_with(1, structured_input={})
 
 
 class TestSuccessPath:
