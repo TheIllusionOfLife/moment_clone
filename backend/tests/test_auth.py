@@ -65,6 +65,45 @@ def test_valid_token_returns_user(app, user, private_key):
     assert data["clerk_user_id"] == user.clerk_user_id
 
 
+def test_patch_me_updates_profile(app, user, db):
+    """PATCH /api/auth/me/ persists learner_profile and sets onboarding_done."""
+    from backend.core.auth import get_current_user
+
+    # Detach from the sync session so the async session in the endpoint can adopt it
+    db.expunge(user)
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    payload = {"learner_profile": {"skill_level": "beginner", "goal": "daily"}}
+    with TestClient(app) as client:
+        resp = client.patch("/api/auth/me/", json=payload)
+
+    app.dependency_overrides.pop(get_current_user, None)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["onboarding_done"] is True
+    assert data["learner_profile"] == payload["learner_profile"]
+
+
+def test_patch_me_unauthenticated(app):
+    """PATCH /api/auth/me/ without auth header returns 401/403."""
+    with TestClient(app) as client:
+        resp = client.patch("/api/auth/me/", json={"learner_profile": {}})
+    assert resp.status_code in (401, 403)
+
+
+def test_patch_me_invalid_payload(app, user):
+    """PATCH /api/auth/me/ with missing learner_profile returns 422."""
+    from backend.core.auth import get_current_user
+
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        resp = client.patch("/api/auth/me/", json={"wrong_field": "value"})
+
+    app.dependency_overrides.pop(get_current_user, None)
+    assert resp.status_code == 422
+
+
 def test_jwks_force_refresh_rate_limited(app, private_key):
     """Multiple unknown-kid requests within the interval trigger only one JWKS force-refresh."""
     import backend.core.auth as auth_module

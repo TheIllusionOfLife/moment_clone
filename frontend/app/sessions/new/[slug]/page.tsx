@@ -176,6 +176,8 @@ export default function NewSessionPage() {
                     <button
                       type="button"
                       key={v}
+                      aria-label={`${label} ${v}点`}
+                      aria-pressed={v <= ratings[key]}
                       onClick={() =>
                         setRatings((r) => ({ ...r, [key]: v }))
                       }
