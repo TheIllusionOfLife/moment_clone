@@ -1,6 +1,7 @@
 """Stage 1 — Video analysis via Gemini multimodal structured prompt."""
 
 import tempfile
+import time
 
 from google import genai
 from google.cloud import storage  # type: ignore[attr-defined]
@@ -14,6 +15,11 @@ from pipeline.stages.db_helpers import (
 )
 
 _REQUIRED_KEYS = {"cooking_events", "key_moment_timestamp", "key_moment_seconds", "diagnosis"}
+
+# Polling defaults: 60 retries × 5 s = 5 minutes maximum wait for ACTIVE state.
+# Long videos (>1 min) can take several minutes to process on the Gemini File API.
+_POLL_RETRIES = 60
+_POLL_INTERVAL_SECONDS = 5
 
 
 def run_video_analysis(session_id: int) -> dict:
@@ -34,23 +40,41 @@ def run_video_analysis(session_id: int) -> dict:
 
         # Upload to Gemini File API
         gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        uploaded_file = gemini_client.files.upload(tmp_video_path)  # type: ignore[misc]
+        uploaded_file = gemini_client.files.upload(file=tmp_video_path)  # type: ignore[misc]
 
     if uploaded_file.uri is None:
         raise RuntimeError("Gemini file upload returned no URI")
     if uploaded_file.name is None:
         raise RuntimeError("Gemini file upload returned no name")
+
+    # The try/finally scope covers both polling and generate_content so that
+    # files.delete is always called — even if polling raises (FAILED state or
+    # timeout) before generate_content is ever reached.
     try:
+        # Wait for the file to become ACTIVE (video processing can take minutes)
+        for _ in range(_POLL_RETRIES):
+            file_info = gemini_client.files.get(name=uploaded_file.name)
+            state = getattr(file_info.state, "name", str(file_info.state))
+            if state == "ACTIVE":
+                break
+            if state == "FAILED":
+                raise RuntimeError(f"Gemini file processing failed: {file_info.name}")
+            time.sleep(_POLL_INTERVAL_SECONDS)
+        else:
+            timeout_secs = _POLL_RETRIES * _POLL_INTERVAL_SECONDS
+            raise RuntimeError(f"Gemini file did not become ACTIVE within {timeout_secs} seconds")
+
+        dish_name = session.custom_dish_name or dish.name_ja
         part = types.Part.from_uri(file_uri=uploaded_file.uri, mime_type="video/mp4")
         prompt = (
-            f"あなたは料理コーチです。以下の料理動画を分析して、JSON形式で回答してください。\n"
-            f"料理: {dish.name_ja}\n\n"
+            f"あなたは料理コーチです。この動画に映っている調理の様子をそのまま観察し、JSON形式で回答してください。\n"
+            f"ユーザーが練習しようとしている料理は「{dish_name}」ですが、動画に映っている内容を忠実に分析してください。\n\n"
             f"以下の形式で回答してください:\n"
             f"{{\n"
-            f'  "cooking_events": ["観察した調理イベントのリスト"],\n'
+            f'  "cooking_events": ["動画で実際に観察した調理イベントのリスト（見たままを記述）"],\n'
             f'  "key_moment_timestamp": "最重要ポイントの時刻 (例: 00:02:30)",\n'
             f'  "key_moment_seconds": 150,\n'
-            f'  "diagnosis": "全体的な診断と改善すべき点"\n'
+            f'  "diagnosis": "動画で実際に観察した内容に基づく診断と改善点"\n'
             f"}}"
         )
         response = gemini_client.models.generate_content(

@@ -37,7 +37,9 @@ export default function DishDetailPage() {
     enabled: !!slug,
   });
 
-  const canStartNew = Array.isArray(sessions) && sessions.length < 3;
+  const canStartNew =
+    Array.isArray(sessions) &&
+    (slug === "free" || sessions.length < 3);
   const isLoading = dishLoading || sessionsLoading;
 
   if (isLoading)
@@ -85,7 +87,9 @@ export default function DishDetailPage() {
             <Card key={s.id}>
               <CardHeader className="py-3 px-4 flex flex-row items-center justify-between">
                 <CardTitle className="text-sm font-medium">
-                  セッション {s.session_number}
+                  {s.custom_dish_name
+                    ? `${s.custom_dish_name} — セッション ${s.session_number}`
+                    : `セッション ${s.session_number}`}
                 </CardTitle>
                 <div className="flex items-center gap-3">
                   <Badge variant="outline" className="text-xs">

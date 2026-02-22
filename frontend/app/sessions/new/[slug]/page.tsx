@@ -13,9 +13,11 @@ import {
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 
 const MAX_VIDEO_MB = 500;
-const MAX_AUDIO_MB = 50;
+const isFree = (slug: string) => slug === "free";
 
 export default function NewSessionPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -23,8 +25,9 @@ export default function NewSessionPage() {
   const { apiFetch, apiUpload } = useApi();
 
   const [sessionId, setSessionId] = useState<number | null>(null);
+  const [customDishName, setCustomDishName] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [memoText, setMemoText] = useState("");
   const [ratings, setRatings] = useState({
     appearance: 3,
     taste: 3,
@@ -45,28 +48,25 @@ export default function NewSessionPage() {
     setVideoFile(file);
   }
 
-  function handleAudioChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    if (file && file.size > MAX_AUDIO_MB * 1024 * 1024) {
-      setError(`音声ファイルは${MAX_AUDIO_MB}MB以下にしてください`);
-      return;
-    }
-    setError(null);
-    setAudioFile(file);
-  }
-
   async function handleUpload() {
     if (!videoFile) return;
+    if (isFree(slug) && !customDishName.trim()) {
+      setError("料理名を入力してください");
+      return;
+    }
     setUploading(true);
     setError(null);
 
     try {
-      // Create session lazily on first upload attempt
       let sid = sessionId;
       if (!sid) {
+        const body: { dish_slug: string; custom_dish_name?: string } = {
+          dish_slug: slug,
+        };
+        if (isFree(slug)) body.custom_dish_name = customDishName.trim();
         const session = await apiFetch<CookingSession>("/api/sessions/", {
           method: "POST",
-          body: JSON.stringify({ dish_slug: slug }),
+          body: JSON.stringify(body),
         });
         sid = session.id;
         setSessionId(sid);
@@ -78,17 +78,15 @@ export default function NewSessionPage() {
         `/api/sessions/${sid}/upload/`,
         videoForm,
       );
-      setUploadProgress(50);
+      setUploadProgress(40);
 
-      if (audioFile) {
-        const audioForm = new FormData();
-        audioForm.append("audio", audioFile);
-        await apiUpload<CookingSession>(
-          `/api/sessions/${sid}/voice-memo/`,
-          audioForm,
-        );
+      if (memoText.trim()) {
+        await apiFetch(`/api/sessions/${sid}/memo-text/`, {
+          method: "POST",
+          body: JSON.stringify({ text: memoText.trim() }),
+        });
       }
-      setUploadProgress(80);
+      setUploadProgress(70);
 
       await apiFetch(`/api/sessions/${sid}/ratings/`, {
         method: "PATCH",
@@ -125,6 +123,23 @@ export default function NewSessionPage() {
       )}
 
       <div className="space-y-6">
+        {/* Custom dish name — free-choice only */}
+        {isFree(slug) && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">料理名 *</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Input
+                placeholder="例: 鶏の唐揚げ、ナポリタン..."
+                value={customDishName}
+                onChange={(e) => setCustomDishName(e.target.value)}
+                disabled={uploading}
+              />
+            </CardContent>
+          </Card>
+        )}
+
         {/* Video upload */}
         <Card>
           <CardHeader>
@@ -144,20 +159,20 @@ export default function NewSessionPage() {
           </CardContent>
         </Card>
 
-        {/* Voice memo (optional) */}
+        {/* Self-assessment text (replaces audio file upload) */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              自己評価の音声メモ（任意）
+              自己評価のコメント（任意）
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <input
-              type="file"
-              accept="audio/*"
-              onChange={handleAudioChange}
+            <Textarea
+              placeholder="今回の料理の感想や反省点を自由に書いてください。AIコーチがフィードバックに活用します。"
+              value={memoText}
+              onChange={(e) => setMemoText(e.target.value)}
               disabled={uploading}
-              className="block w-full text-sm text-zinc-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-zinc-100 file:text-zinc-700 hover:file:bg-zinc-200"
+              rows={4}
             />
           </CardContent>
         </Card>
@@ -165,7 +180,7 @@ export default function NewSessionPage() {
         {/* Star ratings */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">自己評価（任意）</CardTitle>
+            <CardTitle className="text-base">自己採点（任意）</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {ratingLabels.map(({ key, label }) => (
@@ -204,7 +219,7 @@ export default function NewSessionPage() {
 
         <Button
           className="w-full"
-          disabled={!videoFile || uploading}
+          disabled={!videoFile || uploading || (isFree(slug) && !customDishName.trim())}
           onClick={handleUpload}
         >
           {uploading

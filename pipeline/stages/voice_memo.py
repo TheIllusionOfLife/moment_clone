@@ -20,6 +20,27 @@ def run_voice_memo(session_id: int) -> dict:
     """
     session, dish = get_session_with_dish(session_id)
 
+    # Text entered directly via the web form — skip STT, run Gemini extraction
+    if session.voice_transcript and not session.voice_memo_url:
+        transcript = session.voice_transcript
+        gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        prompt = (
+            f"以下の料理自己評価テキストから、味・見た目・食感・香りの評価（1〜5点）と"
+            f"ユーザーの自己評価を抽出し、JSON形式で返してください。\n\n"
+            f"テキスト: <transcript>\n{transcript}\n</transcript>\n\n"
+            f"出力形式例:\n"
+            f'{{"taste": 4, "appearance": 3, "texture": 4, "aroma": 5, "self_assessment": "..."}}'
+        )
+        gemini_response = gemini_client.models.generate_content(
+            model=settings.GEMINI_MODEL, contents=prompt
+        )
+        try:
+            structured_input = _parse_json_response(gemini_response.text or "")
+        except ValueError:
+            structured_input = {}
+        update_session_fields(session_id, structured_input=structured_input)
+        return {"voice_transcript": transcript, "structured_input": structured_input}
+
     if not session.voice_memo_url:
         return {"voice_transcript": "", "structured_input": {}}
 
@@ -61,7 +82,7 @@ def run_voice_memo(session_id: int) -> dict:
 
     try:
         structured_input = _parse_json_response(gemini_response.text or "")
-    except Exception:
+    except ValueError:
         structured_input = {}
 
     update_session_fields(

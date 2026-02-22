@@ -50,6 +50,7 @@ async def get_owned_session(
 
 class CreateSessionRequest(BaseModel):
     dish_slug: str
+    custom_dish_name: str | None = None  # required when dish_slug == "free"
 
 
 class RatingsRequest(BaseModel):
@@ -57,6 +58,10 @@ class RatingsRequest(BaseModel):
     taste: int = Field(ge=1, le=5)
     texture: int = Field(ge=1, le=5)
     aroma: int = Field(ge=1, le=5)
+
+
+class MemoTextRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
 
 
 # ---------------------------------------------------------------------------
@@ -105,13 +110,21 @@ async def create_session(
         .all()
     )
     session_number = len(existing) + 1
-    if session_number > 3:
+    if dish.slug != "free" and session_number > 3:
         raise HTTPException(status_code=400, detail="Maximum 3 sessions per dish")
+
+    if dish.slug == "free" and not (body.custom_dish_name or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="custom_dish_name is required for free-choice sessions",
+        )
 
     cooking_session = CookingSession(
         user_id=current_user.id,
         dish_id=dish.id,
         session_number=session_number,
+        # custom_dish_name is only meaningful for the free-choice dish
+        custom_dish_name=body.custom_dish_name or None if dish.slug == "free" else None,
     )
     db.add(cooking_session)
     try:
@@ -221,6 +234,26 @@ async def save_ratings(
     return await _session_to_dict(owned_session)
 
 
+@router.post("/{session_id}/memo-text/")
+async def save_memo_text(
+    body: MemoTextRequest,
+    owned_session: CookingSession = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_async_session),
+) -> dict:
+    """Accept a typed self-assessment text instead of a voice memo file.
+
+    Clears voice_memo_url so the pipeline text path always takes precedence —
+    both fields cannot coexist on a session.
+    """
+    owned_session.voice_transcript = body.text.strip()
+    owned_session.voice_memo_url = None
+    owned_session.updated_at = datetime.now(UTC)
+    db.add(owned_session)
+    await db.commit()
+    await db.refresh(owned_session)
+    return await _session_to_dict(owned_session)
+
+
 @router.get("/{session_id}/")
 async def get_session_detail(
     owned_session: CookingSession = Depends(get_owned_session),
@@ -253,6 +286,7 @@ async def _session_to_dict(s: CookingSession) -> dict:
         "user_id": s.user_id,
         "dish_id": s.dish_id,
         "session_number": s.session_number,
+        "custom_dish_name": s.custom_dish_name,
         "status": s.status,
         "raw_video_url": raw_video_url,
         "voice_memo_url": s.voice_memo_url,

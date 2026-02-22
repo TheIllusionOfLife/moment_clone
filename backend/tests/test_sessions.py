@@ -141,3 +141,112 @@ def test_ratings_valid(client, cooking_session):
     )
     assert resp.status_code == 200
     assert resp.json()["self_ratings"]["appearance"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Memo text endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_save_memo_text_persists_transcript(client, cooking_session):
+    """POST /memo-text/ stores voice_transcript directly (no audio upload needed)."""
+    resp = client.post(
+        f"/api/sessions/{cooking_session.id}/memo-text/",
+        json={"text": "今日は火加減が難しかったです。"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["voice_transcript"] == "今日は火加減が難しかったです。"
+
+
+def test_save_memo_text_strips_whitespace(client, cooking_session):
+    resp = client.post(
+        f"/api/sessions/{cooking_session.id}/memo-text/",
+        json={"text": "  スペースあり  "},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["voice_transcript"] == "スペースあり"
+
+
+def test_save_memo_text_empty_string_rejected(client, cooking_session):
+    resp = client.post(
+        f"/api/sessions/{cooking_session.id}/memo-text/",
+        json={"text": ""},
+    )
+    assert resp.status_code == 422
+
+
+def test_save_memo_text_wrong_owner_returns_404(other_client, cooking_session):
+    resp = other_client.post(
+        f"/api/sessions/{cooking_session.id}/memo-text/",
+        json={"text": "test"},
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Free dish (自由投稿) session creation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def free_dish(db):
+    from backend.models.dish import Dish
+
+    d = Dish(
+        slug="free",
+        name_ja="自由投稿",
+        name_en="Free Choice",
+        description_ja="好きな料理",
+        order=99,
+    )
+    db.add(d)
+    db.commit()
+    db.refresh(d)
+    return d
+
+
+def test_create_free_session_requires_custom_dish_name(client, free_dish):
+    """POST /api/sessions/ with dish_slug=free and no custom_dish_name returns 422."""
+    resp = client.post("/api/sessions/", json={"dish_slug": "free"})
+    assert resp.status_code == 422
+
+
+def test_create_free_session_with_custom_name_succeeds(client, free_dish):
+    resp = client.post(
+        "/api/sessions/",
+        json={"dish_slug": "free", "custom_dish_name": "鶏の唐揚げ"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["custom_dish_name"] == "鶏の唐揚げ"
+
+
+def test_free_dish_allows_more_than_three_sessions(client, db, user, free_dish):
+    """Free dish bypasses the 3-session cap."""
+    from backend.models.session import CookingSession
+
+    # Pre-create 3 sessions so the next would normally be blocked
+    for n in range(1, 4):
+        s = CookingSession(user_id=user.id, dish_id=free_dish.id, session_number=n)
+        db.add(s)
+    db.commit()
+
+    resp = client.post(
+        "/api/sessions/",
+        json={"dish_slug": "free", "custom_dish_name": "4回目の料理"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["session_number"] == 4
+
+
+def test_non_free_dish_blocks_fourth_session(client, db, user, dish):
+    """Non-free dishes still enforce the 3-session cap."""
+    from backend.models.session import CookingSession
+
+    for n in range(1, 4):
+        s = CookingSession(user_id=user.id, dish_id=dish.id, session_number=n)
+        db.add(s)
+    db.commit()
+
+    resp = client.post("/api/sessions/", json={"dish_slug": dish.slug})
+    assert resp.status_code == 400

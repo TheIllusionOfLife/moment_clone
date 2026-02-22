@@ -1,8 +1,14 @@
 """Stage 4 — Video production.
 
-Downloads raw video from GCS, runs Cloud TTS for part1/part2 narration, extracts
-a 30-second key-moment clip with FFmpeg, composes the coaching video, uploads it
-to GCS, and posts it to the user's coaching chat room.
+Downloads raw video from GCS, runs Cloud TTS for part1/part2 narration, composes
+the coaching video, uploads it to GCS, and posts it to the user's coaching chat room.
+
+Video structure:
+  Part 1 — full cooking video (from t=0) plays while the coach delivers the
+            general diagnosis narration.  The user watches their own footage
+            while hearing what went well and what to improve.
+  Part 2 — 30-second key-moment clip plays while the coach narrates the specific
+            technique tip for that moment.
 
 Does NOT set status='completed' — that is handled by the mark-completed step in
 pipeline/functions.py.
@@ -107,14 +113,47 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
         _synthesize_tts(tts_client, narration_script["part1"], part1_audio_path)
         _synthesize_tts(tts_client, narration_script["part2"], part2_audio_path)
 
-        # Step 3: Extract 30-second clip at key_moment_seconds, normalised to 1280x720.
-        # Scale + pad ensures the final concat demuxer receives identical stream params.
+        # Step 3: Resolve key_moment_seconds, clamped so the 30-second clip fits.
         try:
             key_moment = max(
                 0.0, float((session.video_analysis or {}).get("key_moment_seconds", 0) or 0)
             )
         except (TypeError, ValueError):
             key_moment = 0.0
+        raw_duration = _get_audio_duration(raw_video_path)
+        key_moment = min(key_moment, max(0.0, raw_duration - 30))
+
+        # Step 4: Compose intro segment — cooking video from t=0 + part1 narration.
+        # -stream_loop -1 loops the source so short videos don't run out before
+        # the narration ends; -t limits output to exactly part1_duration seconds.
+        part1_duration = _get_audio_duration(part1_audio_path)
+        _run_ffmpeg(
+            [
+                "-stream_loop",
+                "-1",
+                "-i",
+                raw_video_path,
+                "-i",
+                part1_audio_path,
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-vf",
+                "scale=1280:720:force_original_aspect_ratio=decrease,"
+                "pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-t",
+                str(part1_duration),
+                intro_segment_path,
+            ]
+        )
+
+        # Step 4b: Extract 30-second key-moment clip, normalised to 1280x720.
+        # Done after the intro so raw_duration is already known.
         _run_ffmpeg(
             [
                 "-ss",
@@ -136,33 +175,15 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
             ]
         )
 
-        # Step 4: Compose intro segment (black screen + part1 audio).
-        part1_duration = _get_audio_duration(part1_audio_path)
-        _run_ffmpeg(
-            [
-                "-f",
-                "lavfi",
-                "-i",
-                f"color=black:s=1280x720:r=30:d={part1_duration}",
-                "-i",
-                part1_audio_path,
-                "-c:v",
-                "libx264",
-                "-c:a",
-                "aac",
-                "-t",
-                str(part1_duration),
-                "-shortest",
-                intro_segment_path,
-            ]
-        )
-
         # Step 5: Compose key-moment segment (clip + part2 audio).
-        # Explicit -map prevents FFmpeg selecting the original video audio over narration.
-        # -t limits to narration length; -shortest is removed to avoid cutting narration.
+        # -stream_loop -1 loops the clip so short source videos don't end before
+        # the narration finishes.  -t limits output to exactly part2_duration.
+        # Explicit -map prevents FFmpeg selecting original video audio over narration.
         part2_duration = _get_audio_duration(part2_audio_path)
         _run_ffmpeg(
             [
+                "-stream_loop",
+                "-1",
                 "-i",
                 key_moment_clip_path,
                 "-i",

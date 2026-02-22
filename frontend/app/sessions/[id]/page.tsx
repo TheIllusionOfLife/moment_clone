@@ -105,9 +105,20 @@ export default function SessionDetailPage() {
 
       {session?.coaching_text && (
         <div className="mb-6">
-          <h2 className="text-base font-semibold text-zinc-800 mb-3">
-            AIコーチからのフィードバック
-          </h2>
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-base font-semibold text-zinc-800">
+              AIコーチからのフィードバック
+            </h2>
+            <span className="inline-flex items-center gap-1 text-xs text-zinc-400 border border-zinc-200 rounded-full px-2 py-0.5">
+              <svg viewBox="0 0 24 24" className="w-3 h-3" aria-hidden="true">
+                <path
+                  d="M12 2L9.09 8.26L2 9.27L7 14.14L5.82 21.02L12 17.77L18.18 21.02L17 14.14L22 9.27L14.91 8.26L12 2Z"
+                  fill="currentColor"
+                />
+              </svg>
+              Gemini
+            </span>
+          </div>
           <CoachingTextSection ct={session.coaching_text} />
         </div>
       )}
