@@ -36,10 +36,21 @@ from inngest._internal import transforms as _inngest_transforms  # noqa: E402
 
 def _patched_validate_sig(
     body: bytes,
-    headers: dict,
+    headers: dict[str, str],
     mode: _inngest_server_lib.ServerKind,
     signing_key: str | None,
-) -> object:
+) -> str | Exception | None:
+    """Replacement for inngest SDK's ``_validate_sig`` (inngest-py <= 0.5.15 bug).
+
+    The SDK uses ``urllib.parse.parse_qs`` to parse the ``x-inngest-signature``
+    header, but Inngest Cloud sends it as ``t=TIMESTAMP,s=SIGNATURE``
+    (comma-separated).  ``parse_qs`` only splits on ``&``, so it returns
+    ``{"t": ["TIMESTAMP,s=SIG"]}`` and the subsequent ``int()`` call raises
+    ``ValueError`` — an unhandled exception that makes uvicorn return a 500.
+
+    This replacement splits on ``,`` instead.  Remove once the upstream SDK
+    issue (https://github.com/inngest/inngest-py) is resolved.
+    """
     if mode == _inngest_server_lib.ServerKind.DEV_SERVER:
         return None
 
@@ -50,17 +61,19 @@ def _patched_validate_sig(
             f"{_inngest_server_lib.HeaderKey.SIGNATURE.value} header"
         )
 
-    timestamp = None
-    signature = None
+    timestamp_str: str | None = None
+    signature: str | None = None
     for part in sig_header.split(","):
         if "=" in part:
             k, v = part.split("=", 1)
             k = k.strip()
             if k == "t":
+                raw = v.strip()
                 try:
-                    timestamp = int(v.strip())
+                    int(raw)  # validate it is a valid integer
                 except ValueError:
-                    return Exception("invalid timestamp in signature header")
+                    return _inngest_errors.SigVerificationFailedError()
+                timestamp_str = raw
             elif k == "s":
                 signature = v.strip()
 
@@ -69,16 +82,15 @@ def _patched_validate_sig(
             "cannot validate signature in production mode without a signing key"
         )
 
-    if signature is None:
-        return Exception(f"{_inngest_server_lib.HeaderKey.SIGNATURE.value} header is malformed")
+    if timestamp_str is None or signature is None:
+        return _inngest_errors.SigVerificationFailedError()
 
     mac = hmac.new(
         _inngest_transforms.remove_signing_key_prefix(signing_key).encode("utf-8"),
         body,
         hashlib.sha256,
     )
-    if timestamp:
-        mac.update(str(timestamp).encode("utf-8"))
+    mac.update(timestamp_str.encode("utf-8"))
 
     if not hmac.compare_digest(signature, mac.hexdigest()):
         return _inngest_errors.SigVerificationFailedError()
