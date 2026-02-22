@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
@@ -227,7 +227,7 @@ async def save_ratings(
     db: AsyncSession = Depends(get_async_session),
 ) -> dict:
     owned_session.self_ratings = body.model_dump()
-    owned_session.updated_at = datetime.now(UTC)
+    owned_session.updated_at = datetime.utcnow()
     db.add(owned_session)
     await db.commit()
     await db.refresh(owned_session)
@@ -247,7 +247,7 @@ async def save_memo_text(
     """
     owned_session.voice_transcript = body.text.strip()
     owned_session.voice_memo_url = None
-    owned_session.updated_at = datetime.now(UTC)
+    owned_session.updated_at = datetime.utcnow()
     db.add(owned_session)
     await db.commit()
     await db.refresh(owned_session)
