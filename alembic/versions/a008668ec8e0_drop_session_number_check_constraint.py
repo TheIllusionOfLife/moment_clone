@@ -33,6 +33,7 @@ def downgrade() -> None:
     op.execute("ALTER TABLE session DROP COLUMN IF EXISTS custom_dish_name;")
     # WARNING: unsafe if free-dish sessions with session_number > 3 already exist.
     # Those rows must be deleted first or this constraint will fail.
+    op.execute("ALTER TABLE session DROP CONSTRAINT IF EXISTS session_number_1_to_3;")
     op.execute(
         "ALTER TABLE session ADD CONSTRAINT session_number_1_to_3 "
         "CHECK (session_number IN (1, 2, 3));"

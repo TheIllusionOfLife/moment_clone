@@ -102,8 +102,10 @@ frontend/e2e/.auth/user.json   # gitignored — created at runtime by global-set
 ### Required env vars (`frontend/.env.local`)
 
 ```bash
-E2E_USERNAME=<email>     # Clerk account email
-E2E_PASSWORD=<password>  # Clerk account password
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...   # required by Clerk.js in-browser
+CLERK_SECRET_KEY=sk_test_...                    # required by clerkSetup() to fetch testing token
+E2E_USERNAME=<email>                            # Clerk account email
+E2E_PASSWORD=<password>                         # Clerk account password
 ```
 
 ### Run

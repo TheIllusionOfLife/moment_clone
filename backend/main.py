@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+import time
 
 import inngest.fast_api
 from fastapi import FastAPI
@@ -70,8 +71,10 @@ def _patched_validate_sig(
             if k == "t":
                 raw = v.strip()
                 try:
-                    int(raw)  # validate it is a valid integer
+                    timestamp_int = int(raw)
                 except ValueError:
+                    return _inngest_errors.SigVerificationFailedError()
+                if abs(int(time.time()) - timestamp_int) > 300:
                     return _inngest_errors.SigVerificationFailedError()
                 timestamp_str = raw
             elif k == "s":
