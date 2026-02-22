@@ -170,6 +170,21 @@ Requires `npx inngest-cli@latest dev` running in a separate terminal (UI at `loc
 | `read_doc` | Read a specific Inngest doc |
 | `grep_docs` | Search Inngest docs by pattern |
 
+## Cloud Run IAM Requirements
+
+The `moment-clone-backend` service account needs the following IAM binding (already applied, do not remove):
+
+```bash
+# Required for GCS signed URL generation (Cloud Run has no private key, uses IAM signBlob API)
+gcloud iam service-accounts add-iam-policy-binding \
+  moment-clone-backend@moment-clone.iam.gserviceaccount.com \
+  --member="serviceAccount:moment-clone-backend@moment-clone.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project=moment-clone
+```
+
+Without this, `GET /api/sessions/{id}/` and `GET /api/chat/rooms/*/messages/` return 500 (signed URL endpoints fail with PERMISSION_DENIED).
+
 ## Baked-in constraints
 - **Japanese only** (`ja-JP`): all prompts, TTS (Chirp 3 HD `ja-JP-Chirp3-HD-*`), coaching text
 - **`gemini-3-flash-preview`** for all AI tasks (API identifier; model is Gemini 3 Flash). `gemini-embedding-001` (768-dim) for embeddings. Both via `GEMINI_API_KEY`.
