@@ -87,6 +87,52 @@ Markdown principles → embedded via Gemini `gemini-embedding-001` (768-dim) →
 | Feedback delivery | Tiered (text first) | Users read diagnosis in ~2–3 min while video encodes; vs Moment's 2-day wait |
 | Coaching video storage | GCS path (not URL) | Signed URL generated at read time; no stale URLs in chat history |
 
+## E2E Testing with Playwright + Clerk
+
+Clerk's development instance uses cross-domain `dvb_` (dev_browser) JWTs. A headless browser visiting the app and accounts.dev separately creates **two unlinked** `dvb_` tokens → `__client_uat=0` on app domain → session never syncs.
+
+### Solution: share Vercel's `dvb_` JWT with accounts.dev
+
+```
+frontend/clerk_login.mjs   # standalone auth helper (saves session to /tmp/clerk_session.json)
+frontend/clerk_e2e.mjs     # full E2E screenshot run (all 6 pages)
+```
+
+Run from `frontend/` (needs `@playwright/test` installed):
+
+```bash
+cd frontend
+node clerk_e2e.mjs
+# Screenshots → ../e2e-screenshots/
+```
+
+### How it works
+
+1. Load `https://moment-clone.vercel.app/` → capture `__clerk_db_jwt` cookie (`dvb_A`)
+2. Intercept all `https://<FAPI>/v1/**` requests → append `?__clerk_testing_token=<token>` + force `captcha_bypass: true` (bypasses Turnstile without `+clerk_test` email suffix)
+3. Navigate to sign-in token URL **with** `?__clerk_db_jwt=dvb_A` appended — both domains now share the same `dvb_` JWT
+4. Session syncs; subsequent navigations to Vercel are authenticated
+
+### Clerk API calls used
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/testing_tokens` | Get testing token (Turnstile bypass) |
+| `POST /v1/sign_in_tokens` | Get one-time sign-in URL for `USER_ID` |
+
+### Bootstrapping a new test user in Supabase
+
+The Clerk webhook creates the User row on `user.created`. If a user exists in Clerk but not in the DB (e.g. account pre-dates backend deployment), create manually:
+
+```sql
+INSERT INTO "user" (clerk_user_id, email, first_name, onboarding_done, subscription_status, learner_profile)
+VALUES ('<clerk_user_id>', '<email>', '<name>', false, 'inactive', '{}');
+
+-- Get the new user's id, then:
+INSERT INTO learnerstate (user_id) VALUES (<id>);
+INSERT INTO chatroom (user_id, room_type) VALUES (<id>, 'coaching'), (<id>, 'cooking_videos');
+```
+
 ## MCP Servers
 
 Two MCP servers are available in this project. Use them instead of raw SQL or Inngest API calls.
