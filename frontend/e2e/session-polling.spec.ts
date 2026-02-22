@@ -1,6 +1,23 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Session detail polling", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route("**/api/auth/me/", async (route) => {
+      await route.fulfill({
+        json: {
+          id: 1,
+          clerk_user_id: "user_test",
+          email: "test@example.com",
+          first_name: "Test",
+          onboarding_done: true,
+          subscription_status: "free",
+          learner_profile: null,
+          created_at: new Date().toISOString(),
+        },
+      });
+    });
+  });
+
   test("shows processing spinner then coaching text", async ({ page }) => {
     let callCount = 0;
 

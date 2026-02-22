@@ -34,9 +34,18 @@ async def _fetch_jwks(force_refresh: bool = False) -> dict:
             cached = _jwks_cache.get("jwks")
             if cached is not None:
                 return cached
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(settings.CLERK_JWKS_URL, timeout=10)
-        resp.raise_for_status()
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(settings.CLERK_JWKS_URL, timeout=10)
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            stale = _jwks_cache.get("jwks")
+            if stale is not None:
+                return stale
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to fetch JWKS from Clerk",
+            )
         data = resp.json()
         _jwks_cache["jwks"] = data
         return data

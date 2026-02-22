@@ -44,6 +44,7 @@ export default function CookingVideosPage() {
                 <video
                   src={msg.video_url}
                   controls
+                  aria-label="料理動画"
                   className="w-full rounded-lg"
                 />
               )}

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useApi } from "@/lib/api";
 import type { CookingSession } from "@/types/api";
@@ -15,6 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const MAX_VIDEO_MB = 500;
+const MAX_AUDIO_MB = 50;
 
 export default function NewSessionPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -33,19 +34,6 @@ export default function NewSessionPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const sessionCreated = useRef(false);
-
-  // Create session on mount
-  useEffect(() => {
-    if (sessionCreated.current) return;
-    sessionCreated.current = true;
-    apiFetch<CookingSession>("/api/sessions/", {
-      method: "POST",
-      body: JSON.stringify({ dish_slug: slug }),
-    })
-      .then((s) => setSessionId(s.id))
-      .catch((e: Error) => setError(e.message));
-  }, [slug, apiFetch]);
 
   function handleVideoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
@@ -57,16 +45,37 @@ export default function NewSessionPage() {
     setVideoFile(file);
   }
 
+  function handleAudioChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    if (file && file.size > MAX_AUDIO_MB * 1024 * 1024) {
+      setError(`音声ファイルは${MAX_AUDIO_MB}MB以下にしてください`);
+      return;
+    }
+    setError(null);
+    setAudioFile(file);
+  }
+
   async function handleUpload() {
-    if (!videoFile || !sessionId) return;
+    if (!videoFile) return;
     setUploading(true);
     setError(null);
 
     try {
+      // Create session lazily on first upload attempt
+      let sid = sessionId;
+      if (!sid) {
+        const session = await apiFetch<CookingSession>("/api/sessions/", {
+          method: "POST",
+          body: JSON.stringify({ dish_slug: slug }),
+        });
+        sid = session.id;
+        setSessionId(sid);
+      }
+
       const videoForm = new FormData();
       videoForm.append("video", videoFile);
       await apiUpload<CookingSession>(
-        `/api/sessions/${sessionId}/upload/`,
+        `/api/sessions/${sid}/upload/`,
         videoForm,
       );
       setUploadProgress(50);
@@ -75,18 +84,18 @@ export default function NewSessionPage() {
         const audioForm = new FormData();
         audioForm.append("audio", audioFile);
         await apiUpload<CookingSession>(
-          `/api/sessions/${sessionId}/voice-memo/`,
+          `/api/sessions/${sid}/voice-memo/`,
           audioForm,
         );
       }
       setUploadProgress(80);
 
-      await apiFetch(`/api/sessions/${sessionId}/ratings/`, {
+      await apiFetch(`/api/sessions/${sid}/ratings/`, {
         method: "PATCH",
         body: JSON.stringify(ratings),
       });
       setUploadProgress(100);
-      router.push(`/sessions/${sessionId}`);
+      router.push(`/sessions/${sid}`);
     } catch (e: unknown) {
       setError(
         e instanceof Error ? e.message : "アップロードに失敗しました",
@@ -146,7 +155,7 @@ export default function NewSessionPage() {
             <input
               type="file"
               accept="audio/*"
-              onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)}
+              onChange={handleAudioChange}
               disabled={uploading}
               className="block w-full text-sm text-zinc-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-zinc-100 file:text-zinc-700 hover:file:bg-zinc-200"
             />
@@ -193,7 +202,7 @@ export default function NewSessionPage() {
 
         <Button
           className="w-full"
-          disabled={!videoFile || uploading || !sessionId}
+          disabled={!videoFile || uploading}
           onClick={handleUpload}
         >
           {uploading

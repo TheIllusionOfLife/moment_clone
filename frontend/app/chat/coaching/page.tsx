@@ -85,7 +85,7 @@ export default function CoachingChatPage() {
   return (
     <main
       className="max-w-2xl mx-auto px-4 py-6 flex flex-col"
-      style={{ minHeight: "calc(100vh - 73px)" }}
+      style={{ height: "calc(100vh - 73px)" }}
     >
       <h1 className="text-xl font-bold text-zinc-900 mb-4">AIコーチ</h1>
 

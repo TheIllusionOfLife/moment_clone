@@ -51,13 +51,13 @@ export interface CookingSession {
   status: SessionStatus;
   raw_video_url: string | null;
   voice_memo_url: string | null;
-  self_ratings: Record<string, number>;
+  self_ratings: Record<string, number> | null;
   voice_transcript: string | null;
-  structured_input: Record<string, unknown>;
-  video_analysis: Record<string, unknown>;
+  structured_input: Record<string, unknown> | null;
+  video_analysis: Record<string, unknown> | null;
   coaching_text: CoachingText | null;
   coaching_text_delivered_at: string | null;
-  narration_script: Record<string, unknown>;
+  narration_script: Record<string, unknown> | null;
   coaching_video_url: string | null;
   pipeline_error: string | null;
   created_at: string;
