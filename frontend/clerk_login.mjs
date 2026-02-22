@@ -65,7 +65,7 @@ async function getSignInTokenUrl() {
   }
   
   const vercelDvbJwt = dvbCookie.value;
-  console.log('Vercel dev_browser JWT:', vercelDvbJwt);
+  console.log('Vercel dev_browser JWT:', vercelDvbJwt.slice(0, 20) + '...');
 
   // Step 2: Set up testing token interceptor for Clerk API calls
   console.log('Step 2: Setting up testing token interceptor...');

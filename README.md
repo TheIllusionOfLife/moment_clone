@@ -239,7 +239,7 @@ User uploads video
     → Stage 3b: Narration script generated
     → Stage 4: TTS + FFmpeg video composition → GCS
          Intro: cooking footage looped with narration (not a black screen)
-         Highlight: 15-second clip at key_moment_seconds with part2 narration
+         Highlight: 30-second clip at key_moment_seconds with part2 narration
     → Coaching video posted to Coaching chat (~5–10 min)
 ```
 

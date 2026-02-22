@@ -18,7 +18,7 @@ class CookingSession(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)
     dish_id: int = Field(foreign_key="dish.id")
-    session_number: int  # 1, 2, or 3 — CHECK constraint already in Supabase
+    session_number: int  # 1–3 for regular dishes; unlimited for slug='free' (no DB CHECK)
 
     # For free-choice dish: user-supplied dish name stored with the session
     custom_dish_name: str | None = None

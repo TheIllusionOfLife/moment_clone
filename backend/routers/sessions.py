@@ -61,7 +61,7 @@ class RatingsRequest(BaseModel):
 
 
 class MemoTextRequest(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=2000)
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,8 @@ async def create_session(
         user_id=current_user.id,
         dish_id=dish.id,
         session_number=session_number,
-        custom_dish_name=body.custom_dish_name or None,
+        # custom_dish_name is only meaningful for the free-choice dish
+        custom_dish_name=body.custom_dish_name or None if dish.slug == "free" else None,
     )
     db.add(cooking_session)
     try:
@@ -239,8 +240,13 @@ async def save_memo_text(
     owned_session: CookingSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_async_session),
 ) -> dict:
-    """Accept a typed self-assessment text instead of a voice memo file."""
+    """Accept a typed self-assessment text instead of a voice memo file.
+
+    Clears voice_memo_url so the pipeline text path always takes precedence —
+    both fields cannot coexist on a session.
+    """
     owned_session.voice_transcript = body.text.strip()
+    owned_session.voice_memo_url = None
     owned_session.updated_at = datetime.now(UTC)
     db.add(owned_session)
     await db.commit()
