@@ -5,6 +5,12 @@ import path from "path";
 const authFile = path.join(__dirname, ".auth/user.json");
 
 setup("authenticate", async ({ page }) => {
+  const username = process.env.E2E_USERNAME;
+  const password = process.env.E2E_PASSWORD;
+  if (!username || !password) {
+    throw new Error("E2E_USERNAME and E2E_PASSWORD must be set in your environment for E2E tests.");
+  }
+
   await clerkSetup();
 
   await setupClerkTestingToken({ page });
@@ -14,8 +20,8 @@ setup("authenticate", async ({ page }) => {
     page,
     signInParams: {
       strategy: "password",
-      identifier: process.env.E2E_USERNAME!,
-      password: process.env.E2E_PASSWORD!,
+      identifier: username,
+      password: password,
     },
   });
 
