@@ -16,6 +16,11 @@ from pipeline.stages.db_helpers import (
 
 _REQUIRED_KEYS = {"cooking_events", "key_moment_timestamp", "key_moment_seconds", "diagnosis"}
 
+# Polling defaults: 60 retries × 5 s = 5 minutes maximum wait for ACTIVE state.
+# Long videos (>1 min) can take several minutes to process on the Gemini File API.
+_POLL_RETRIES = 60
+_POLL_INTERVAL_SECONDS = 5
+
 
 def run_video_analysis(session_id: int) -> dict:
     """Analyse the cooking video with Gemini and persist the result.
@@ -42,19 +47,23 @@ def run_video_analysis(session_id: int) -> dict:
     if uploaded_file.name is None:
         raise RuntimeError("Gemini file upload returned no name")
 
-    # Wait for the file to become ACTIVE (video processing can take a few seconds)
-    for _ in range(30):
-        file_info = gemini_client.files.get(name=uploaded_file.name)
-        state = getattr(file_info.state, "name", str(file_info.state))
-        if state == "ACTIVE":
-            break
-        if state == "FAILED":
-            raise RuntimeError(f"Gemini file processing failed: {file_info.name}")
-        time.sleep(2)
-    else:
-        raise RuntimeError("Gemini file did not become ACTIVE within 60 seconds")
-
+    # The try/finally scope covers both polling and generate_content so that
+    # files.delete is always called — even if polling raises (FAILED state or
+    # timeout) before generate_content is ever reached.
     try:
+        # Wait for the file to become ACTIVE (video processing can take minutes)
+        for _ in range(_POLL_RETRIES):
+            file_info = gemini_client.files.get(name=uploaded_file.name)
+            state = getattr(file_info.state, "name", str(file_info.state))
+            if state == "ACTIVE":
+                break
+            if state == "FAILED":
+                raise RuntimeError(f"Gemini file processing failed: {file_info.name}")
+            time.sleep(_POLL_INTERVAL_SECONDS)
+        else:
+            timeout_secs = _POLL_RETRIES * _POLL_INTERVAL_SECONDS
+            raise RuntimeError(f"Gemini file did not become ACTIVE within {timeout_secs} seconds")
+
         dish_name = session.custom_dish_name or dish.name_ja
         part = types.Part.from_uri(file_uri=uploaded_file.uri, mime_type="video/mp4")
         prompt = (

@@ -86,32 +86,68 @@ class TestSuccess:
 
 
 class TestFinallyCleanup:
-    def test_run_video_analysis_file_deleted_on_error(self, mocker):
-        """Even when generate_content raises, files.delete must be called (finally block)."""
+    def _base_mocks(self, mocker):
         mocker.patch(
             "pipeline.stages.video_analysis.get_session_with_dish",
             return_value=(_make_session(), _make_dish()),
         )
         mocker.patch("pipeline.stages.video_analysis.update_session_fields")
         _mock_gcs(mocker)
+        mocker.patch("pipeline.stages.video_analysis.time.sleep")
 
         mock_uploaded_file = mocker.MagicMock()
         mock_uploaded_file.uri = "https://generativelanguage.googleapis.com/v1beta/files/abc123"
         mock_uploaded_file.name = "files/abc123"
 
-        mock_file_info = mocker.MagicMock()
-        mock_file_info.state.name = "ACTIVE"
-
         mock_gemini_client = mocker.MagicMock()
         mock_gemini_client.return_value.files.upload.return_value = mock_uploaded_file
-        mock_gemini_client.return_value.files.get.return_value = mock_file_info
+        mocker.patch("pipeline.stages.video_analysis.genai.Client", mock_gemini_client)
+        return mock_gemini_client
+
+    def test_file_deleted_when_generate_content_raises(self, mocker):
+        """files.delete is called even when generate_content raises."""
+        mock_gemini_client = self._base_mocks(mocker)
+
+        active = mocker.MagicMock()
+        active.state.name = "ACTIVE"
+        mock_gemini_client.return_value.files.get.return_value = active
         mock_gemini_client.return_value.models.generate_content.side_effect = RuntimeError(
             "API timeout"
         )
-        mocker.patch("pipeline.stages.video_analysis.genai.Client", mock_gemini_client)
-        mocker.patch("pipeline.stages.video_analysis.time.sleep")
 
         with pytest.raises(RuntimeError, match="API timeout"):
+            run_video_analysis(1)
+
+        mock_gemini_client.return_value.files.delete.assert_called_once_with(name="files/abc123")
+
+    def test_file_deleted_when_state_is_failed(self, mocker):
+        """files.delete is called even when polling raises due to FAILED state."""
+        mock_gemini_client = self._base_mocks(mocker)
+
+        failed = mocker.MagicMock()
+        failed.state.name = "FAILED"
+        mock_gemini_client.return_value.files.get.return_value = failed
+
+        with pytest.raises(RuntimeError, match="processing failed"):
+            run_video_analysis(1)
+
+        mock_gemini_client.return_value.files.delete.assert_called_once_with(name="files/abc123")
+
+    def test_file_deleted_on_poll_timeout(self, mocker):
+        """files.delete is called even when polling times out; error message includes duration."""
+        import pipeline.stages.video_analysis as va
+
+        mock_gemini_client = self._base_mocks(mocker)
+
+        processing = mocker.MagicMock()
+        processing.state.name = "PROCESSING"
+        mock_gemini_client.return_value.files.get.return_value = processing
+
+        # Reduce retries so the test runs instantly
+        mocker.patch.object(va, "_POLL_RETRIES", 2)
+        mocker.patch.object(va, "_POLL_INTERVAL_SECONDS", 1)
+
+        with pytest.raises(RuntimeError, match="2 seconds"):
             run_video_analysis(1)
 
         mock_gemini_client.return_value.files.delete.assert_called_once_with(name="files/abc123")
