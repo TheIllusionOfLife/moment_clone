@@ -89,36 +89,34 @@ Markdown principles → embedded via Gemini `gemini-embedding-001` (768-dim) →
 
 ## E2E Testing with Playwright + Clerk
 
-Clerk's development instance uses cross-domain `dvb_` (dev_browser) JWTs. A headless browser visiting the app and accounts.dev separately creates **two unlinked** `dvb_` tokens → `__client_uat=0` on app domain → session never syncs.
+Uses `@clerk/testing` official package. Auth is established once in the setup project and stored as Playwright `storageState`.
 
-### Solution: share Vercel's `dvb_` JWT with accounts.dev
+### Files
 
 ```text
-frontend/clerk_login.mjs   # standalone auth helper (saves session to /tmp/clerk_session.json)
-frontend/clerk_e2e.mjs     # full E2E screenshot run (all 6 pages)
+frontend/e2e/global-setup.ts   # setup project: signs in once, saves e2e/.auth/user.json
+frontend/e2e/fixtures.ts       # extended `test` that injects Clerk testing token per test
+frontend/e2e/.auth/user.json   # gitignored — created at runtime by global-setup
 ```
 
-Run from `frontend/` (needs `@playwright/test` installed):
+### Required env vars (`frontend/.env.local`)
+
+```bash
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...   # required by Clerk.js in-browser
+CLERK_SECRET_KEY=sk_test_...                    # required by clerkSetup() to fetch testing token
+E2E_USERNAME=<email>                            # Clerk account email
+E2E_PASSWORD=<password>                         # Clerk account password
+```
+
+### Run
 
 ```bash
 cd frontend
-node clerk_e2e.mjs
-# Screenshots → ../e2e-screenshots/
+APP_URL=https://moment-clone.vercel.app npx playwright test
 ```
 
-### How it works
-
-1. Load `https://moment-clone.vercel.app/` → capture `__clerk_db_jwt` cookie (`dvb_A`)
-2. Intercept all `https://<FAPI>/v1/**` requests → append `?__clerk_testing_token=<token>` + force `captcha_bypass: true` (bypasses Turnstile without `+clerk_test` email suffix)
-3. Navigate to sign-in token URL **with** `?__clerk_db_jwt=dvb_A` appended — both domains now share the same `dvb_` JWT
-4. Session syncs; subsequent navigations to Vercel are authenticated
-
-### Clerk API calls used
-
-| Endpoint | Purpose |
-|---|---|
-| `POST /v1/testing_tokens` | Get testing token (Turnstile bypass) |
-| `POST /v1/sign_in_tokens` | Get one-time sign-in URL for `USER_ID` |
+All tests in the `chromium` project depend on the `setup` project and start pre-authenticated.
+Tests that need the Clerk testing token (e.g. auth-flow tests) should import `test` from `./fixtures` instead of `@playwright/test`.
 
 ### Bootstrapping a new test user in Supabase
 

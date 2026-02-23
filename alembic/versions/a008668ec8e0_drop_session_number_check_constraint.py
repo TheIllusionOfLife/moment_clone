@@ -24,9 +24,7 @@ depends_on = None
 
 def upgrade() -> None:
     # Add the free-dish name column (idempotent — already exists in prod).
-    op.execute(
-        "ALTER TABLE session ADD COLUMN IF NOT EXISTS custom_dish_name VARCHAR NULL;"
-    )
+    op.execute("ALTER TABLE session ADD COLUMN IF NOT EXISTS custom_dish_name VARCHAR NULL;")
     # Drop the now-obsolete session_number CHECK constraint (idempotent).
     op.execute("ALTER TABLE session DROP CONSTRAINT IF EXISTS session_number_1_to_3;")
 
@@ -35,6 +33,7 @@ def downgrade() -> None:
     op.execute("ALTER TABLE session DROP COLUMN IF EXISTS custom_dish_name;")
     # WARNING: unsafe if free-dish sessions with session_number > 3 already exist.
     # Those rows must be deleted first or this constraint will fail.
+    op.execute("ALTER TABLE session DROP CONSTRAINT IF EXISTS session_number_1_to_3;")
     op.execute(
         "ALTER TABLE session ADD CONSTRAINT session_number_1_to_3 "
         "CHECK (session_number IN (1, 2, 3));"
