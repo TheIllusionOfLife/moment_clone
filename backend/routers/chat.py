@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from google import genai
 from google.genai import types
@@ -93,7 +95,10 @@ async def list_messages(
     )
 
     results = []
-    for m in reversed(messages):  # return chronological order
+    tasks = []
+    task_indices = []
+
+    for i, m in enumerate(reversed(messages)):  # return chronological order
         msg_dict: dict = {
             "id": m.id,
             "sender": m.sender,
@@ -104,12 +109,20 @@ async def list_messages(
             "created_at": m.created_at.isoformat(),
         }
         if m.video_gcs_path:
-            msg_dict["video_url"] = await generate_signed_url(
-                bucket=settings.GCS_BUCKET,
-                object_path=m.video_gcs_path,
-                expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
+            tasks.append(
+                generate_signed_url(
+                    bucket=settings.GCS_BUCKET,
+                    object_path=m.video_gcs_path,
+                    expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
+                )
             )
+            task_indices.append(i)
         results.append(msg_dict)
+
+    if tasks:
+        urls = await asyncio.gather(*tasks)
+        for i, url in zip(task_indices, urls, strict=True):
+            results[i]["video_url"] = url
 
     return {"page": page, "page_size": page_size, "messages": results}
 
