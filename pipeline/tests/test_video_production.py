@@ -72,7 +72,7 @@ def test_run_ffmpeg_success():
     mock_result.returncode = 0
     mock_result.stderr = b""
 
-    with patch("pipeline.stages.video_production.subprocess.run", return_value=mock_result):
+    with patch("pipeline.utils.subprocess.run", return_value=mock_result):
         # Should not raise
         _run_ffmpeg(["-i", "input.mp4", "output.mp4"])
 
@@ -90,7 +90,7 @@ def test_run_ffmpeg_failure_raises_runtime_error():
     mock_result.returncode = 1
     mock_result.stderr = b"No such file or directory"
 
-    with patch("pipeline.stages.video_production.subprocess.run", return_value=mock_result):
+    with patch("pipeline.utils.subprocess.run", return_value=mock_result):
         with pytest.raises(RuntimeError, match="No such file or directory"):
             _run_ffmpeg(["-i", "missing.mp4", "output.mp4"])
 
@@ -148,7 +148,7 @@ def test_run_video_production_success():
             side_effect=mock_synthesize_tts,
         ),
         patch(
-            "pipeline.stages.video_production.subprocess.run",
+            "pipeline.utils.subprocess.run",
             side_effect=_make_subprocess_side_effect(),
         ),
     ):
@@ -211,7 +211,7 @@ def test_video_production_does_not_set_completed_status():
             side_effect=mock_synthesize_tts,
         ),
         patch(
-            "pipeline.stages.video_production.subprocess.run",
+            "pipeline.utils.subprocess.run",
             side_effect=_make_subprocess_side_effect(),
         ),
     ):
