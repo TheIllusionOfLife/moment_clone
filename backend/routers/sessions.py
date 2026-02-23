@@ -9,6 +9,7 @@ from sqlmodel import col, select
 
 from backend.core.auth import get_current_user
 from backend.core.database import get_async_session
+from backend.core.security import validate_video_magic
 from backend.core.settings import settings
 from backend.models.dish import Dish
 from backend.models.session import CookingSession
@@ -155,6 +156,15 @@ async def upload_video(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid content type '{video.content_type}'. Allowed: {sorted(ALLOWED_VIDEO_MIMES)}",
         )
+
+    # Validate file magic bytes to ensure it's a real video file.
+    header = await video.read(2048)
+    if not validate_video_magic(header):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid file content (magic bytes mismatch)",
+        )
+    await video.seek(0)
 
     # Stream size check without accumulating bytes in Python memory.
     size = 0
