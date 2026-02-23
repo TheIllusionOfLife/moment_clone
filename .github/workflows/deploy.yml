@@ -44,6 +44,7 @@ jobs:
           docker push "${{ env.IMAGE }}:latest"
 
       - name: Set GCS bucket CORS policy
+        continue-on-error: true
         run: |
           BUCKET=$(gcloud secrets versions access latest --secret=GCS_BUCKET)
           cat > /tmp/gcs_cors.json << 'CORS_EOF'
