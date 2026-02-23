@@ -34,7 +34,8 @@ sys.modules["backend.models.learner_state"].LearnerState = MockModel
 sys.path.append(".")
 
 # Import the stage logic after mocking its dependencies
-from pipeline.stages.rag import run_rag
+from pipeline.stages.rag import run_rag  # noqa: E402
+
 
 def _make_session(diagnosis: str | None = None) -> MockModel:
     return MockModel(
