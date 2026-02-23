@@ -1,6 +1,8 @@
-from unittest import mock
 import os
+from unittest import mock
+
 from backend.core.settings import Settings
+
 
 def test_cors_origins_default_is_secure():
     # Ensure no environment variables interfere
@@ -15,6 +17,7 @@ def test_cors_origins_default_is_secure():
         assert "http://localhost:3001" not in settings.cors_origins_list
         # Ideally, it should be empty if no env var is set
         assert settings.cors_origins_list == []
+
 
 def test_cors_origins_can_be_configured():
     # Verify that we can still configure CORS origins via arguments (simulating env vars)
