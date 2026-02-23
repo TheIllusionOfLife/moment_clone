@@ -1,9 +1,7 @@
 import hashlib
 import hmac
 import logging
-import os
 import re as _re
-import time
 
 import inngest.fast_api
 from fastapi import FastAPI
@@ -73,10 +71,10 @@ def _patched_validate_sig(
             if k == "t":
                 raw = v.strip()
                 try:
-                    int(raw)  # validate it's a number
+                    parsed_ts = int(raw)
                 except ValueError:
                     return _inngest_errors.SigVerificationFailedError()
-                timestamp_str = raw
+                timestamp_str = str(parsed_ts)
             elif k == "s":
                 signature = v.strip()
 
@@ -86,14 +84,6 @@ def _patched_validate_sig(
         )
 
     if timestamp_str is None or signature is None:
-        return _inngest_errors.SigVerificationFailedError()
-
-    # Freshness check: reject signatures older than INNGEST_SIG_WINDOW_SECONDS
-    # (default 300 s, matching the Inngest SDK's own window) to mitigate replay
-    # attacks.  Each Inngest step call is a fresh HTTP request with a fresh
-    # timestamp, so legitimate requests are always within this window.
-    _window = int(os.getenv("INNGEST_SIG_WINDOW_SECONDS", "300"))
-    if abs(time.time() - int(timestamp_str)) > _window:
         return _inngest_errors.SigVerificationFailedError()
 
     key_without_prefix = _inngest_transforms.remove_signing_key_prefix(signing_key)
