@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -92,7 +93,7 @@ async def list_sessions(
     sessions = (
         (await db.execute(stmt.order_by(col(CookingSession.created_at).desc()))).scalars().all()
     )
-    return [await _session_to_dict(s) for s in sessions]
+    return await asyncio.gather(*[_session_to_dict(s) for s in sessions])
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
