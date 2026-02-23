@@ -1,4 +1,5 @@
 import asyncio
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from google import genai
 from google.genai import types
@@ -120,7 +121,7 @@ async def list_messages(
 
     if tasks:
         urls = await asyncio.gather(*tasks)
-        for i, url in zip(task_indices, urls):
+        for i, url in zip(task_indices, urls, strict=True):
             results[i]["video_url"] = url
 
     return {"page": page, "page_size": page_size, "messages": results}
