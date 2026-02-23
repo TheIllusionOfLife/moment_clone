@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import JSON, Column, UniqueConstraint
@@ -49,5 +49,5 @@ class CookingSession(SQLModel, table=True):
     # Video output (Stage 4) — GCS object path; signed URL generated at read time
     coaching_video_gcs_path: str = Field(default="")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
