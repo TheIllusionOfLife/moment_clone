@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
+from starlette.concurrency import run_in_threadpool
 
 from backend.core.auth import get_current_user
 from backend.core.database import get_async_session
@@ -23,8 +24,6 @@ MAX_VIDEO_BYTES = 500 * 1024 * 1024  # 500 MB
 
 ALLOWED_AUDIO_MIMES = {"audio/mp4", "audio/mpeg", "audio/wav", "audio/webm", "audio/m4a"}
 MAX_AUDIO_BYTES = 100 * 1024 * 1024  # 100 MB
-
-_CHUNK_SIZE = 1024 * 1024  # 1 MB read chunks
 
 
 # ---------------------------------------------------------------------------
@@ -149,17 +148,15 @@ async def upload_video(
         )
 
     # Stream size check without accumulating bytes in Python memory.
-    size = 0
-    while chunk := await video.read(_CHUNK_SIZE):
-        size += len(chunk)
-        if size > MAX_VIDEO_BYTES:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Video exceeds 500 MB limit",
-            )
-
-    # Seek back so GCS can read from the start via the underlying SpooledTemporaryFile.
+    await run_in_threadpool(video.file.seek, 0, 2)
+    size = await run_in_threadpool(video.file.tell)
     await video.seek(0)
+
+    if size > MAX_VIDEO_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Video exceeds 500 MB limit",
+        )
 
     object_path = f"sessions/{owned_session.id}/raw_video_{uuid.uuid4().hex}.mp4"
     gcs_path = await upload_file(
@@ -194,16 +191,15 @@ async def upload_voice_memo(
             detail=f"Invalid audio type '{audio.content_type}'. Allowed: {sorted(ALLOWED_AUDIO_MIMES)}",
         )
 
-    size = 0
-    while chunk := await audio.read(_CHUNK_SIZE):
-        size += len(chunk)
-        if size > MAX_AUDIO_BYTES:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Audio exceeds 100 MB limit",
-            )
-
+    await run_in_threadpool(audio.file.seek, 0, 2)
+    size = await run_in_threadpool(audio.file.tell)
     await audio.seek(0)
+
+    if size > MAX_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Audio exceeds 100 MB limit",
+        )
 
     object_path = f"sessions/{owned_session.id}/voice_memo_{uuid.uuid4().hex}"
     gcs_path = await upload_file(
