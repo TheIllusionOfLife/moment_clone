@@ -13,7 +13,7 @@ from backend.core.settings import settings
 from backend.models.dish import Dish
 from backend.models.session import CookingSession
 from backend.models.user import User
-from backend.services.gcs import generate_signed_url, upload_file
+from backend.services.gcs import generate_signed_upload_url, generate_signed_url, upload_file
 from backend.services.inngest_client import send_video_uploaded
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -62,6 +62,14 @@ class RatingsRequest(BaseModel):
 
 class MemoTextRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+
+
+class UploadUrlRequest(BaseModel):
+    content_type: str = "video/mp4"
+
+
+class ConfirmUploadRequest(BaseModel):
+    gcs_path: str
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +185,79 @@ async def upload_video(
     await db.refresh(owned_session)
 
     assert owned_session.id is not None  # always set after db.refresh()
+    await send_video_uploaded(owned_session.id, owned_session.user_id)
+
+    return await _session_to_dict(owned_session)
+
+
+@router.post("/{session_id}/upload-url/")
+async def get_upload_url(
+    body: UploadUrlRequest,
+    owned_session: CookingSession = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_async_session),
+) -> dict:
+    """Return a signed GCS PUT URL so the browser can upload the video directly,
+    bypassing Cloud Run's 32 MB request body limit.
+
+    The expected GCS path is stored on the session so confirm-upload can verify
+    the client is not supplying an arbitrary path.
+    """
+    if body.content_type not in ALLOWED_VIDEO_MIMES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid content type '{body.content_type}'. Allowed: {sorted(ALLOWED_VIDEO_MIMES)}",
+        )
+    ext = "mp4" if body.content_type == "video/mp4" else "mov"
+    object_path = f"sessions/{owned_session.id}/raw_video_{uuid.uuid4().hex}.{ext}"
+    upload_url = await generate_signed_upload_url(
+        bucket=settings.GCS_BUCKET,
+        object_path=object_path,
+        content_type=body.content_type,
+    )
+    if not upload_url:
+        raise HTTPException(status_code=500, detail="Failed to generate upload URL")
+
+    # Persist the expected path so confirm-upload can validate it.
+    owned_session.pending_gcs_path = object_path
+    db.add(owned_session)
+    await db.commit()
+
+    return {"upload_url": upload_url, "gcs_path": object_path}
+
+
+@router.post("/{session_id}/confirm-upload/")
+async def confirm_upload(
+    body: ConfirmUploadRequest,
+    owned_session: CookingSession = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_async_session),
+) -> dict:
+    """Record the GCS path after the browser has PUT the video directly to GCS,
+    then trigger the pipeline.
+
+    Guards:
+    - 409 if the session is already uploaded (idempotency).
+    - 400 if gcs_path doesn't match the path issued by /upload-url/ (path forgery).
+    """
+    if owned_session.status != "pending_upload":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Upload already confirmed for this session",
+        )
+    if body.gcs_path != owned_session.pending_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="gcs_path does not match the path issued by /upload-url/",
+        )
+
+    owned_session.raw_video_url = body.gcs_path
+    owned_session.pending_gcs_path = None  # consumed; no longer needed
+    owned_session.status = "uploaded"
+    owned_session.pipeline_job_id = uuid.uuid4()
+    db.add(owned_session)
+    await db.commit()
+    await db.refresh(owned_session)
+
+    assert owned_session.id is not None
     await send_video_uploaded(owned_session.id, owned_session.user_id)
 
     return await _session_to_dict(owned_session)
