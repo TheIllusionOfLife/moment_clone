@@ -194,9 +194,14 @@ async def upload_video(
 async def get_upload_url(
     body: UploadUrlRequest,
     owned_session: CookingSession = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """Return a signed GCS PUT URL so the browser can upload the video directly,
-    bypassing Cloud Run's 32 MB request body limit."""
+    bypassing Cloud Run's 32 MB request body limit.
+
+    The expected GCS path is stored on the session so confirm-upload can verify
+    the client is not supplying an arbitrary path.
+    """
     if body.content_type not in ALLOWED_VIDEO_MIMES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -211,6 +216,12 @@ async def get_upload_url(
     )
     if not upload_url:
         raise HTTPException(status_code=500, detail="Failed to generate upload URL")
+
+    # Persist the expected path so confirm-upload can validate it.
+    owned_session.pending_gcs_path = object_path
+    db.add(owned_session)
+    await db.commit()
+
     return {"upload_url": upload_url, "gcs_path": object_path}
 
 
@@ -221,8 +232,25 @@ async def confirm_upload(
     db: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """Record the GCS path after the browser has PUT the video directly to GCS,
-    then trigger the pipeline."""
+    then trigger the pipeline.
+
+    Guards:
+    - 409 if the session is already uploaded (idempotency).
+    - 400 if gcs_path doesn't match the path issued by /upload-url/ (path forgery).
+    """
+    if owned_session.status != "pending_upload":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Upload already confirmed for this session",
+        )
+    if body.gcs_path != owned_session.pending_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="gcs_path does not match the path issued by /upload-url/",
+        )
+
     owned_session.raw_video_url = body.gcs_path
+    owned_session.pending_gcs_path = None  # consumed; no longer needed
     owned_session.status = "uploaded"
     owned_session.pipeline_job_id = uuid.uuid4()
     db.add(owned_session)

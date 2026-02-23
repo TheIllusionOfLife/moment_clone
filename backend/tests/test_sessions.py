@@ -250,3 +250,153 @@ def test_non_free_dish_blocks_fourth_session(client, db, user, dish):
 
     resp = client.post("/api/sessions/", json={"dish_slug": dish.slug})
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Signed upload URL endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_upload_url_valid_mime_returns_url(client, cooking_session):
+    with patch(
+        "backend.routers.sessions.generate_signed_upload_url", new_callable=AsyncMock
+    ) as mock_sign:
+        mock_sign.return_value = "https://storage.example.com/signed-put"
+        resp = client.post(
+            f"/api/sessions/{cooking_session.id}/upload-url/",
+            json={"content_type": "video/mp4"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["upload_url"] == "https://storage.example.com/signed-put"
+    assert data["gcs_path"].startswith(f"sessions/{cooking_session.id}/raw_video_")
+    assert data["gcs_path"].endswith(".mp4")
+
+
+def test_upload_url_mov_mime_returns_mov_extension(client, cooking_session):
+    with patch(
+        "backend.routers.sessions.generate_signed_upload_url", new_callable=AsyncMock
+    ) as mock_sign:
+        mock_sign.return_value = "https://storage.example.com/signed-put"
+        resp = client.post(
+            f"/api/sessions/{cooking_session.id}/upload-url/",
+            json={"content_type": "video/quicktime"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["gcs_path"].endswith(".mov")
+
+
+def test_upload_url_invalid_mime_rejected(client, cooking_session):
+    resp = client.post(
+        f"/api/sessions/{cooking_session.id}/upload-url/",
+        json={"content_type": "video/avi"},
+    )
+    assert resp.status_code == 422
+    assert "video/avi" in resp.json()["detail"]
+
+
+def test_upload_url_wrong_owner_returns_404(other_client, cooking_session):
+    resp = other_client.post(
+        f"/api/sessions/{cooking_session.id}/upload-url/",
+        json={"content_type": "video/mp4"},
+    )
+    assert resp.status_code == 404
+
+
+def test_upload_url_stores_pending_path(client, db, cooking_session):
+    """get_upload_url must persist pending_gcs_path so confirm-upload can validate it."""
+
+    with patch(
+        "backend.routers.sessions.generate_signed_upload_url", new_callable=AsyncMock
+    ) as mock_sign:
+        mock_sign.return_value = "https://storage.example.com/signed-put"
+        resp = client.post(
+            f"/api/sessions/{cooking_session.id}/upload-url/",
+            json={"content_type": "video/mp4"},
+        )
+    assert resp.status_code == 200
+    gcs_path = resp.json()["gcs_path"]
+
+    db.expire(cooking_session)
+    db.refresh(cooking_session)
+    assert cooking_session.pending_gcs_path == gcs_path
+
+
+# ---------------------------------------------------------------------------
+# Confirm upload endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_confirm_upload_valid_path_succeeds(client, db, cooking_session):
+
+    # Seed the expected path directly
+    cooking_session.pending_gcs_path = "sessions/1/raw_video_abc.mp4"
+    db.add(cooking_session)
+    db.commit()
+
+    with (
+        patch("backend.routers.sessions.send_video_uploaded", new_callable=AsyncMock),
+        patch("backend.routers.sessions.generate_signed_url", new_callable=AsyncMock) as mock_sign,
+    ):
+        mock_sign.return_value = "https://storage.example.com/signed-get"
+        resp = client.post(
+            f"/api/sessions/{cooking_session.id}/confirm-upload/",
+            json={"gcs_path": "sessions/1/raw_video_abc.mp4"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "uploaded"
+    assert data["raw_video_url"] == "https://storage.example.com/signed-get"
+
+    db.expire(cooking_session)
+    db.refresh(cooking_session)
+    assert cooking_session.pending_gcs_path is None  # consumed
+
+
+def test_confirm_upload_mismatched_path_rejected(client, db, cooking_session):
+    """Supplying a gcs_path that doesn't match the issued path must return 400."""
+    cooking_session.pending_gcs_path = "sessions/1/raw_video_abc.mp4"
+    db.add(cooking_session)
+    db.commit()
+
+    resp = client.post(
+        f"/api/sessions/{cooking_session.id}/confirm-upload/",
+        json={"gcs_path": "sessions/1/raw_video_FORGED.mp4"},
+    )
+    assert resp.status_code == 400
+
+
+def test_confirm_upload_duplicate_call_returns_409(client, db, cooking_session):
+    """Second call after status is already 'uploaded' must return 409."""
+    cooking_session.pending_gcs_path = "sessions/1/raw_video_abc.mp4"
+    db.add(cooking_session)
+    db.commit()
+
+    with (
+        patch("backend.routers.sessions.send_video_uploaded", new_callable=AsyncMock),
+        patch("backend.routers.sessions.generate_signed_url", new_callable=AsyncMock) as mock_sign,
+    ):
+        mock_sign.return_value = "https://storage.example.com/signed-get"
+        first = client.post(
+            f"/api/sessions/{cooking_session.id}/confirm-upload/",
+            json={"gcs_path": "sessions/1/raw_video_abc.mp4"},
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            f"/api/sessions/{cooking_session.id}/confirm-upload/",
+            json={"gcs_path": "sessions/1/raw_video_abc.mp4"},
+        )
+    assert second.status_code == 409
+
+
+def test_confirm_upload_wrong_owner_returns_404(other_client, db, cooking_session):
+    cooking_session.pending_gcs_path = "sessions/1/raw_video_abc.mp4"
+    db.add(cooking_session)
+    db.commit()
+
+    resp = other_client.post(
+        f"/api/sessions/{cooking_session.id}/confirm-upload/",
+        json={"gcs_path": "sessions/1/raw_video_abc.mp4"},
+    )
+    assert resp.status_code == 404

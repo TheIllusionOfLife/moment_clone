@@ -23,6 +23,10 @@ class CookingSession(SQLModel, table=True):
     # For free-choice dish: user-supplied dish name stored with the session
     custom_dish_name: str | None = None
 
+    # Temporary: GCS object path issued by /upload-url/; cleared after confirm-upload.
+    # Server-side record prevents the client from supplying an arbitrary path.
+    pending_gcs_path: str | None = None
+
     # User input
     raw_video_url: str = Field(default="")
     voice_memo_url: str | None = None

@@ -44,12 +44,15 @@ jobs:
           docker push "${{ env.IMAGE }}:latest"
 
       - name: Set GCS bucket CORS policy
+        # GCS_BUCKET is set as a GitHub Actions secret (plain string, not sensitive).
+        # localhost origins are intentional: signed URLs are short-lived (15 min) and
+        # require a valid authenticated session, so local-dev access to the prod bucket
+        # is low risk and convenient for developers.
         run: |
-          BUCKET=$(gcloud secrets versions access latest --secret=GCS_BUCKET)
           cat > /tmp/gcs_cors.json << 'CORS_EOF'
           [{"origin":["https://moment-clone.vercel.app","http://localhost:3000","http://localhost:3001"],"method":["PUT"],"responseHeader":["Content-Type","Access-Control-Allow-Origin"],"maxAgeSeconds":3600}]
           CORS_EOF
-          gsutil cors set /tmp/gcs_cors.json gs://$BUCKET
+          gsutil cors set /tmp/gcs_cors.json gs://${{ secrets.GCS_BUCKET }}
 
       - name: Deploy to Cloud Run
         run: |

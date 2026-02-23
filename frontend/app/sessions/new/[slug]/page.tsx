@@ -73,7 +73,10 @@ export default function NewSessionPage() {
       }
 
       // Get a signed GCS PUT URL (bypasses Cloud Run 32 MB limit)
-      const contentType = videoFile.type || "video/mp4";
+      // Some mobile browsers return empty MIME for .mov files — fall back to extension.
+      const ext = videoFile.name.split(".").pop()?.toLowerCase();
+      const contentType =
+        videoFile.type || (ext === "mov" ? "video/quicktime" : "video/mp4");
       const { upload_url, gcs_path } = await apiFetch<{
         upload_url: string;
         gcs_path: string;
