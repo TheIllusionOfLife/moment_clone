@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
     retries=4,
     concurrency=[inngest.Concurrency(key="event.data.user_id", limit=1)],
 )
-async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
+async def cooking_pipeline(ctx: inngest.Context) -> None:
     # Validate event payload early — malformed events should not burn all retries.
     session_id = ctx.event.data.get("session_id")
     if not isinstance(session_id, int):
@@ -75,7 +75,7 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
             logger.exception("PIPELINE ERROR [session=%s] check-and-set-processing", session_id)
             raise
 
-    should_proceed: bool = await step.run("check-and-set-processing", _check_and_set_processing)  # type: ignore[arg-type, assignment]
+    should_proceed: bool = await ctx.step.run("check-and-set-processing", _check_and_set_processing)  # type: ignore[arg-type, assignment]
     if not should_proceed:
         return
 
@@ -151,35 +151,35 @@ async def cooking_pipeline(ctx: inngest.Context, step: inngest.Step) -> None:
 
     try:
         # Stage 0 — Voice memo (optional, runs if voice_memo_url is set)
-        await step.run("stage-0-voice-memo", _stage_0)  # type: ignore[arg-type]
+        await ctx.step.run("stage-0-voice-memo", _stage_0)  # type: ignore[arg-type]
 
         # Stage 1 — Video analysis (persists to DB; downstream stages read from there)
-        await step.run("stage-1-video-analysis", _stage_1)  # type: ignore[arg-type]
+        await ctx.step.run("stage-1-video-analysis", _stage_1)  # type: ignore[arg-type]
 
         # Stage 2 — RAG (pgvector similarity search)
-        retrieved_context: dict = await step.run("stage-2-rag", _stage_2)  # type: ignore[assignment, arg-type]
+        retrieved_context: dict = await ctx.step.run("stage-2-rag", _stage_2)  # type: ignore[assignment, arg-type]
 
         # Stage 3a — Coaching text → posted to chat immediately
-        coaching_text: dict = await step.run(  # type: ignore[assignment, arg-type]
+        coaching_text: dict = await ctx.step.run(  # type: ignore[assignment, arg-type]
             "stage-3a-coaching-text", lambda: _stage_3a(retrieved_context)
         )
 
         # Stage 3b — Narration script (feeds video production)
-        narration_script: dict = await step.run(  # type: ignore[assignment, arg-type]
+        narration_script: dict = await ctx.step.run(  # type: ignore[assignment, arg-type]
             "stage-3b-narration-script", lambda: _stage_3b(coaching_text)
         )
 
         # Stage 4 — TTS + FFmpeg video composition → GCS
-        await step.run("stage-4-video-production", lambda: _stage_4(narration_script))  # type: ignore[arg-type]
+        await ctx.step.run("stage-4-video-production", lambda: _stage_4(narration_script))  # type: ignore[arg-type]
 
-        await step.run("mark-completed", lambda: _set_terminal_status("completed"))  # type: ignore[arg-type, return-value]
+        await ctx.step.run("mark-completed", lambda: _set_terminal_status("completed"))  # type: ignore[arg-type, return-value]
     except Exception as exc:
         # Stage wrappers already log the specific exception; here we persist the
         # failed status so the session doesn't stay stuck at "processing".
         # Wrap mark-failed so it cannot mask the original exception.
         error_msg = str(exc)
         try:
-            await step.run(  # type: ignore[arg-type, return-value]
+            await ctx.step.run(  # type: ignore[arg-type, return-value]
                 "mark-failed", lambda: _set_terminal_status("failed", error=error_msg)
             )
         except Exception:
