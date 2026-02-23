@@ -1,11 +1,14 @@
 """Tests for security validation on file uploads."""
 
 from unittest.mock import AsyncMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker
+
 from backend.core.auth import get_current_user
 from backend.core.database import get_async_session
+
 
 @pytest.fixture()
 def client(app, async_engine, user):

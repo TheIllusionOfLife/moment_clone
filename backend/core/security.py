@@ -1,5 +1,6 @@
 import filetype
 
+
 def validate_video_magic(file_header: bytes) -> bool:
     """
     Validates the magic bytes of the file header to ensure it's a video.
