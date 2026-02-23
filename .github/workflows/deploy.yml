@@ -60,4 +60,5 @@ jobs:
           GCS_BUCKET=GCS_BUCKET:latest,\
           CORS_ORIGINS=CORS_ORIGINS:latest" \
             --service-account ${{ secrets.CLOUD_RUN_SA }} \
+            --timeout=900 \
             --quiet
