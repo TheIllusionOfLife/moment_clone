@@ -18,12 +18,6 @@ from backend.services.inngest_client import send_video_uploaded
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
-ALLOWED_VIDEO_MIMES = {"video/mp4", "video/quicktime"}
-MAX_VIDEO_BYTES = 500 * 1024 * 1024  # 500 MB
-
-ALLOWED_AUDIO_MIMES = {"audio/mp4", "audio/mpeg", "audio/wav", "audio/webm", "audio/m4a"}
-MAX_AUDIO_BYTES = 100 * 1024 * 1024  # 100 MB
-
 _CHUNK_SIZE = 1024 * 1024  # 1 MB read chunks
 
 
@@ -150,20 +144,21 @@ async def upload_video(
     owned_session: CookingSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_async_session),
 ) -> dict:
-    if video.content_type not in ALLOWED_VIDEO_MIMES:
+    if video.content_type not in settings.ALLOWED_VIDEO_MIMES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid content type '{video.content_type}'. Allowed: {sorted(ALLOWED_VIDEO_MIMES)}",
+            detail=f"Invalid content type '{video.content_type}'. Allowed: {sorted(settings.ALLOWED_VIDEO_MIMES)}",
         )
 
     # Stream size check without accumulating bytes in Python memory.
     size = 0
     while chunk := await video.read(_CHUNK_SIZE):
         size += len(chunk)
-        if size > MAX_VIDEO_BYTES:
+        if size > settings.MAX_VIDEO_BYTES:
+            limit_mb = settings.MAX_VIDEO_BYTES // (1024 * 1024)
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Video exceeds 500 MB limit",
+                detail=f"Video exceeds {limit_mb} MB limit",
             )
 
     # Seek back so GCS can read from the start via the underlying SpooledTemporaryFile.
@@ -202,10 +197,10 @@ async def get_upload_url(
     The expected GCS path is stored on the session so confirm-upload can verify
     the client is not supplying an arbitrary path.
     """
-    if body.content_type not in ALLOWED_VIDEO_MIMES:
+    if body.content_type not in settings.ALLOWED_VIDEO_MIMES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid content type '{body.content_type}'. Allowed: {sorted(ALLOWED_VIDEO_MIMES)}",
+            detail=f"Invalid content type '{body.content_type}'. Allowed: {sorted(settings.ALLOWED_VIDEO_MIMES)}",
         )
     ext = "mp4" if body.content_type == "video/mp4" else "mov"
     object_path = f"sessions/{owned_session.id}/raw_video_{uuid.uuid4().hex}.{ext}"
@@ -269,19 +264,20 @@ async def upload_voice_memo(
     owned_session: CookingSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_async_session),
 ) -> dict:
-    if audio.content_type not in ALLOWED_AUDIO_MIMES:
+    if audio.content_type not in settings.ALLOWED_AUDIO_MIMES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid audio type '{audio.content_type}'. Allowed: {sorted(ALLOWED_AUDIO_MIMES)}",
+            detail=f"Invalid audio type '{audio.content_type}'. Allowed: {sorted(settings.ALLOWED_AUDIO_MIMES)}",
         )
 
     size = 0
     while chunk := await audio.read(_CHUNK_SIZE):
         size += len(chunk)
-        if size > MAX_AUDIO_BYTES:
+        if size > settings.MAX_AUDIO_BYTES:
+            limit_mb = settings.MAX_AUDIO_BYTES // (1024 * 1024)
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Audio exceeds 100 MB limit",
+                detail=f"Audio exceeds {limit_mb} MB limit",
             )
 
     await audio.seek(0)
