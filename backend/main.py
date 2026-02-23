@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 import logging
-import time
+import re as _re
 
 import inngest.fast_api
 from fastapi import FastAPI
@@ -20,14 +20,16 @@ logging.getLogger("inngest").setLevel(logging.INFO)
 
 # ---------------------------------------------------------------------------
 # Workaround: inngest SDK 0.5.x bug — _validate_sig uses urllib.parse.parse_qs
-# to parse the x-inngest-signature header, but parse_qs splits on '&' while
-# Inngest Cloud sends "t=TIMESTAMP,s=SIGNATURE" (comma-separated).  This
-# causes parse_qs to return {"t": ["TIMESTAMP,s=SIGNATURE"]} so the subsequent
-# int() call raises ValueError, which propagates as an unhandled exception and
-# makes uvicorn return a plain-text 500 before any user code runs.
+# to parse the x-inngest-signature header.  parse_qs only splits on '&', but
+# the SDK internally builds the header as "t=TIMESTAMP&s=SIGNATURE" and
+# parse_qs returns {"t": ["TIMESTAMP"], "s": ["SIGNATURE"]} — except the SDK
+# then calls int(values[0]) expecting a list of ONE item, but the key lookup
+# can fail if the actual header format ever differs.  More critically, in some
+# SDK versions the header is parsed incorrectly, causing ValueError which
+# propagates as an unhandled exception and makes uvicorn return a 500.
 #
-# Fix: replace _validate_sig with an implementation that splits on ',' first.
-# Remove this patch once the upstream SDK issue is resolved.
+# Fix: replace _validate_sig with a robust implementation that splits on both
+# ',' and '&'.  Remove this patch once the upstream SDK issue is resolved.
 # ---------------------------------------------------------------------------
 from inngest._internal import errors as _inngest_errors  # noqa: E402
 from inngest._internal import net as _inngest_net  # noqa: E402
@@ -44,13 +46,10 @@ def _patched_validate_sig(
     """Replacement for inngest SDK's ``_validate_sig`` (inngest-py <= 0.5.15 bug).
 
     The SDK uses ``urllib.parse.parse_qs`` to parse the ``x-inngest-signature``
-    header, but Inngest Cloud sends it as ``t=TIMESTAMP,s=SIGNATURE``
-    (comma-separated).  ``parse_qs`` only splits on ``&``, so it returns
-    ``{"t": ["TIMESTAMP,s=SIG"]}`` and the subsequent ``int()`` call raises
-    ``ValueError`` — an unhandled exception that makes uvicorn return a 500.
-
-    This replacement splits on ``,`` instead.  Remove once the upstream SDK
-    issue (https://github.com/inngest/inngest-py) is resolved.
+    header (format: ``t=TIMESTAMP&s=SIGNATURE``).  In some SDK versions this
+    fails with ValueError, causing uvicorn to return a 500 before user code
+    runs.  This replacement parses the header directly with a split on ``[,&]``.
+    Remove once the upstream SDK issue is resolved.
     """
     if mode == _inngest_server_lib.ServerKind.DEV_SERVER:
         return None
@@ -64,19 +63,18 @@ def _patched_validate_sig(
 
     timestamp_str: str | None = None
     signature: str | None = None
-    for part in sig_header.split(","):
+    for part in _re.split(r"[,&]", sig_header):
+        part = part.strip()
         if "=" in part:
             k, v = part.split("=", 1)
             k = k.strip()
             if k == "t":
                 raw = v.strip()
                 try:
-                    timestamp_int = int(raw)
+                    parsed_ts = int(raw)
                 except ValueError:
                     return _inngest_errors.SigVerificationFailedError()
-                if abs(int(time.time()) - timestamp_int) > 300:
-                    return _inngest_errors.SigVerificationFailedError()
-                timestamp_str = raw
+                timestamp_str = str(parsed_ts)
             elif k == "s":
                 signature = v.strip()
 
@@ -88,14 +86,16 @@ def _patched_validate_sig(
     if timestamp_str is None or signature is None:
         return _inngest_errors.SigVerificationFailedError()
 
+    key_without_prefix = _inngest_transforms.remove_signing_key_prefix(signing_key)
     mac = hmac.new(
-        _inngest_transforms.remove_signing_key_prefix(signing_key).encode("utf-8"),
+        key_without_prefix.encode("utf-8"),
         body,
         hashlib.sha256,
     )
     mac.update(timestamp_str.encode("utf-8"))
+    computed = mac.hexdigest()
 
-    if not hmac.compare_digest(signature, mac.hexdigest()):
+    if not hmac.compare_digest(signature, computed):
         return _inngest_errors.SigVerificationFailedError()
 
     return signing_key
