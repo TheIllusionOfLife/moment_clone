@@ -73,6 +73,42 @@ async def upload_file(
     return object_path
 
 
+async def generate_signed_upload_url(
+    bucket: str,
+    object_path: str,
+    content_type: str = "video/mp4",
+    expiry_minutes: int = 15,
+) -> str | None:
+    """Generate a v4 signed URL for uploading (PUT) a GCS object.
+
+    The browser PUTs the video file directly to this URL, bypassing Cloud Run
+    entirely (no 32 MB body-size limit).  The GCS bucket must have a CORS policy
+    allowing PUT from the frontend origin.
+
+    Returns None on failure so callers can surface the error rather than 500-ing.
+    """
+
+    def _sync_sign() -> str | None:
+        try:
+            sa_email, access_token = _get_signing_credentials()
+            blob = _get_client().bucket(bucket).blob(object_path)
+            kwargs: dict[str, Any] = dict(
+                expiration=timedelta(minutes=expiry_minutes),
+                method="PUT",
+                content_type=content_type,
+                version="v4",
+            )
+            if sa_email and access_token:
+                kwargs["service_account_email"] = sa_email
+                kwargs["access_token"] = access_token
+            return blob.generate_signed_url(**kwargs)
+        except Exception as exc:
+            logger.warning("GCS signed upload URL failed for %s/%s: %s", bucket, object_path, exc)
+            return None
+
+    return await asyncio.to_thread(_sync_sign)
+
+
 async def generate_signed_url(
     bucket: str,
     object_path: str,

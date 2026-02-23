@@ -22,7 +22,7 @@ const isFree = (slug: string) => slug === "free";
 export default function NewSessionPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
-  const { apiFetch, apiUpload } = useApi();
+  const { apiFetch } = useApi();
 
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [customDishName, setCustomDishName] = useState("");
@@ -72,12 +72,25 @@ export default function NewSessionPage() {
         setSessionId(sid);
       }
 
-      const videoForm = new FormData();
-      videoForm.append("video", videoFile);
-      await apiUpload<CookingSession>(
-        `/api/sessions/${sid}/upload/`,
-        videoForm,
-      );
+      // Get a signed GCS PUT URL (bypasses Cloud Run 32 MB limit)
+      const { upload_url, gcs_path } = await apiFetch<{
+        upload_url: string;
+        gcs_path: string;
+      }>(`/api/sessions/${sid}/upload-url/`, { method: "POST" });
+
+      // Upload directly to GCS
+      const gcsRes = await fetch(upload_url, {
+        method: "PUT",
+        headers: { "Content-Type": videoFile.type || "video/mp4" },
+        body: videoFile,
+      });
+      if (!gcsRes.ok) throw new Error(`GCS upload failed: ${gcsRes.status}`);
+
+      // Confirm upload to backend — triggers pipeline
+      await apiFetch<CookingSession>(`/api/sessions/${sid}/confirm-upload/`, {
+        method: "POST",
+        body: JSON.stringify({ gcs_path }),
+      });
       setUploadProgress(40);
 
       if (memoText.trim()) {
