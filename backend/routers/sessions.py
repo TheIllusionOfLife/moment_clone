@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 from sqlmodel import col, select
 
 from backend.core.auth import get_current_user
@@ -75,7 +76,11 @@ async def list_sessions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ) -> list[dict]:
-    stmt = select(CookingSession).where(CookingSession.user_id == current_user.id)
+    stmt = (
+        select(CookingSession)
+        .where(CookingSession.user_id == current_user.id)
+        .options(defer(CookingSession.video_analysis), defer(CookingSession.narration_script))
+    )
     if dish_slug:
         dish = (await db.execute(select(Dish).where(Dish.slug == dish_slug))).scalars().first()
         if dish is None:
@@ -84,7 +89,7 @@ async def list_sessions(
     sessions = (
         (await db.execute(stmt.order_by(col(CookingSession.created_at).desc()))).scalars().all()
     )
-    return [await _session_to_dict(s) for s in sessions]
+    return [await _session_to_dict(s, summary=True) for s in sessions]
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -266,7 +271,7 @@ async def get_session_detail(
 # ---------------------------------------------------------------------------
 
 
-async def _session_to_dict(s: CookingSession) -> dict:
+async def _session_to_dict(s: CookingSession, summary: bool = False) -> dict:
     raw_video_url = None
     if s.raw_video_url:
         raw_video_url = await generate_signed_url(
@@ -281,6 +286,11 @@ async def _session_to_dict(s: CookingSession) -> dict:
             object_path=s.coaching_video_gcs_path,
             expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
         )
+
+    # If summary=True, we skip accessing deferred fields to avoid lazy loading
+    video_analysis = {} if summary else (s.video_analysis or {})
+    narration_script = {} if summary else (s.narration_script or {})
+
     return {
         "id": s.id,
         "user_id": s.user_id,
@@ -293,12 +303,12 @@ async def _session_to_dict(s: CookingSession) -> dict:
         "self_ratings": s.self_ratings or {},
         "voice_transcript": s.voice_transcript,
         "structured_input": s.structured_input or {},
-        "video_analysis": s.video_analysis or {},
+        "video_analysis": video_analysis,
         "coaching_text": s.coaching_text or {},
         "coaching_text_delivered_at": (
             s.coaching_text_delivered_at.isoformat() if s.coaching_text_delivered_at else None
         ),
-        "narration_script": s.narration_script or {},
+        "narration_script": narration_script,
         "coaching_video_url": coaching_video_url,
         "pipeline_error": s.pipeline_error,
         "created_at": s.created_at.isoformat(),
