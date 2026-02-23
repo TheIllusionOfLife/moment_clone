@@ -19,7 +19,7 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "webhook_event",
-        sa.Column("id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("id", sqlmodel.AutoString(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
