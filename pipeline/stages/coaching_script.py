@@ -15,13 +15,13 @@ from backend.core.database import get_engine
 from backend.core.settings import settings
 from backend.models.learner_state import LearnerState
 from pipeline.stages.db_helpers import (
-    _parse_json_response,
     get_coaching_room,
     get_cooking_videos_room,
     get_session_with_dish,
     post_message,
     update_session_fields,
 )
+from pipeline.utils import parse_json_response
 
 _REQUIRED_KEYS = ("mondaiten", "skill", "next_action", "success_sign")
 
@@ -111,7 +111,7 @@ def run_coaching_script(session_id: int, retrieved_context: dict) -> dict:
         model=settings.GEMINI_MODEL,
         contents=prompt,
     )
-    coaching_text = _parse_json_response(response.text or "")
+    coaching_text = parse_json_response(response.text or "")
 
     # Validate required keys
     missing = [k for k in _REQUIRED_KEYS if k not in coaching_text]
