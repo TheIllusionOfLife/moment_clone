@@ -79,7 +79,10 @@ async def list_sessions(
     stmt = (
         select(CookingSession)
         .where(CookingSession.user_id == current_user.id)
-        .options(defer(CookingSession.video_analysis), defer(CookingSession.narration_script))
+        .options(
+            defer(CookingSession.video_analysis),  # type: ignore[arg-type]
+            defer(CookingSession.narration_script),  # type: ignore[arg-type]
+        )
     )
     if dish_slug:
         dish = (await db.execute(select(Dish).where(Dish.slug == dish_slug))).scalars().first()
