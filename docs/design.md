@@ -22,8 +22,11 @@
 Next.js PWA (Vercel) + Clerk (auth UI)
     ↓ REST + Clerk JWT (verified via JWKS)
 FastAPI (Cloud Run)   [Inngest mounted via inngest.fast_api.serve()]
-    ↓ store raw video
-Cloud Storage
+    ↓ POST /upload-url/ → signed GCS PUT URL (15 min expiry)
+Next.js PWA
+    ↓ PUT video directly to GCS  (bypasses Cloud Run 32 MB body limit)
+FastAPI (Cloud Run)
+    ↓ POST /confirm-upload/ → validates GCS path, stores raw_video_url
     ↓ inngest_client.send("video/uploaded", data={session_id, ...})
 Inngest (durable pipeline — each stage is a step.run())
     ├── Step 0: Voice Memo STT + extraction (optional)

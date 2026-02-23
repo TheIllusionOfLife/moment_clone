@@ -15,7 +15,7 @@ frontend/public/workbox-*.js
 frontend/public/workbox-*.js.map
 
 # E2E testing artifacts
-e2e-screenshots/
+docs/e2e-screenshots/
 .playwright-cli/
 frontend/.playwright-cli/
 my_cooking_full.mp4
