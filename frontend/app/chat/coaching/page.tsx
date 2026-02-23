@@ -121,7 +121,15 @@ export default function CoachingChatPage() {
                       : "bg-zinc-100 text-zinc-800"
                   }`}
                 >
-                  {msg.text}
+                  {msg.text && <p className="whitespace-pre-wrap">{msg.text}</p>}
+                  {msg.video_url && (
+                    <video
+                      src={msg.video_url}
+                      controls
+                      aria-label="AIコーチング動画"
+                      className="w-full rounded-lg mt-2"
+                    />
+                  )}
                 </div>
               </div>
             ))}
