@@ -1,11 +1,14 @@
-import pytest
 import asyncio
 import time
+
+import pytest
 from fastapi.testclient import TestClient
-from backend.models.chat import ChatRoom, Message
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
 from backend.core.auth import get_current_user
 from backend.core.database import get_async_session
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from backend.models.chat import ChatRoom, Message
+
 
 @pytest.mark.asyncio
 async def test_list_messages_performance(app, async_engine, user, mocker):
@@ -20,7 +23,6 @@ async def test_list_messages_performance(app, async_engine, user, mocker):
         room_id = room.id
 
         # Create 20 messages with video_gcs_path
-        messages = []
         for i in range(20):
             msg = Message(
                 chat_room_id=room_id,

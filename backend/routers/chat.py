@@ -1,4 +1,5 @@
 import asyncio
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from google import genai
 from google.genai import types
@@ -114,7 +115,7 @@ async def list_messages(
     video_urls = await asyncio.gather(*video_url_tasks) if video_url_tasks else []
 
     # Map results back to messages
-    url_map = dict(zip(video_url_indices, video_urls))
+    url_map = dict(zip(video_url_indices, video_urls, strict=True))
 
     results = []
     for i, m in enumerate(chronological_messages):
