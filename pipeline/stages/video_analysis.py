@@ -9,10 +9,10 @@ from google.genai import types
 
 from backend.core.settings import settings
 from pipeline.stages.db_helpers import (
-    _parse_json_response,
     get_session_with_dish,
     update_session_fields,
 )
+from pipeline.utils import parse_json_response
 
 _REQUIRED_KEYS = {"cooking_events", "key_moment_timestamp", "key_moment_seconds", "diagnosis"}
 
@@ -84,7 +84,7 @@ def run_video_analysis(session_id: int) -> dict:
     finally:
         gemini_client.files.delete(name=uploaded_file.name)
 
-    result = _parse_json_response(response.text or "")
+    result = parse_json_response(response.text or "")
 
     missing = _REQUIRED_KEYS - result.keys()
     if missing:

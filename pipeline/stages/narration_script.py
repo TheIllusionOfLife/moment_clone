@@ -9,10 +9,10 @@ from google import genai
 
 from backend.core.settings import settings
 from pipeline.stages.db_helpers import (
-    _parse_json_response,
     get_session_with_dish,
     update_session_fields,
 )
+from pipeline.utils import parse_json_response
 
 PIVOT_LINE = "動画を使ってそのポイントを見てみましょう"
 
@@ -52,7 +52,7 @@ def run_narration_script(session_id: int, coaching_text: dict) -> dict:
         model=settings.GEMINI_MODEL,
         contents=prompt,
     )
-    narration = _parse_json_response(response.text or "")
+    narration = parse_json_response(response.text or "")
 
     # Always override pivot with the fixed canonical string.
     narration["pivot"] = PIVOT_LINE
