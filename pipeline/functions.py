@@ -14,6 +14,8 @@ Stages:
 
 import asyncio
 import logging
+from collections.abc import Callable
+from typing import Any
 
 import inngest
 
@@ -48,6 +50,13 @@ async def cooking_pipeline(ctx: inngest.Context) -> None:
 
     # Idempotency guard: use SELECT FOR UPDATE to prevent concurrent invocations
     # from both proceeding past this check for the same session.
+    async def _run_stage(stage_name: str, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        except Exception:
+            logger.exception("PIPELINE ERROR [session=%s] %s", session_id, stage_name)
+            raise
+
     def _check_and_set_processing_sync() -> bool:
         from sqlmodel import Session as DBSession
         from sqlmodel import select
@@ -68,14 +77,10 @@ async def cooking_pipeline(ctx: inngest.Context) -> None:
             db.commit()
         return True
 
-    async def _check_and_set_processing() -> bool:
-        try:
-            return await asyncio.to_thread(_check_and_set_processing_sync)
-        except Exception:
-            logger.exception("PIPELINE ERROR [session=%s] check-and-set-processing", session_id)
-            raise
-
-    should_proceed: bool = await ctx.step.run("check-and-set-processing", _check_and_set_processing)  # type: ignore[arg-type, assignment]
+    should_proceed: bool = await ctx.step.run(  # type: ignore[arg-type, assignment]
+        "check-and-set-processing",
+        lambda: _run_stage("check-and-set-processing", _check_and_set_processing_sync),
+    )
     if not should_proceed:
         return
 
@@ -94,85 +99,55 @@ async def cooking_pipeline(ctx: inngest.Context) -> None:
                 db.add(cooking_session)
                 db.commit()
 
-    async def _set_terminal_status(new_status: str, error: str | None = None) -> None:
-        try:
-            await asyncio.to_thread(_set_terminal_status_sync, new_status, error)
-        except Exception:
-            logger.exception(
-                "PIPELINE ERROR [session=%s] set-terminal-status(%s)", session_id, new_status
-            )
-            raise
-
-    # Async wrappers: each stage runs in a thread (blocking I/O) and logs any
-    # exception BEFORE the Inngest SDK's except-clause swallows it silently.
-
-    async def _stage_0() -> dict:
-        try:
-            return await asyncio.to_thread(run_voice_memo, session_id)
-        except Exception:
-            logger.exception("PIPELINE ERROR [session=%s] stage-0-voice-memo", session_id)
-            raise
-
-    async def _stage_1() -> dict:
-        try:
-            return await asyncio.to_thread(run_video_analysis, session_id)
-        except Exception:
-            logger.exception("PIPELINE ERROR [session=%s] stage-1-video-analysis", session_id)
-            raise
-
-    async def _stage_2() -> dict:
-        try:
-            return await asyncio.to_thread(run_rag, session_id)
-        except Exception:
-            logger.exception("PIPELINE ERROR [session=%s] stage-2-rag", session_id)
-            raise
-
-    async def _stage_3a(retrieved_context: dict) -> dict:
-        try:
-            return await asyncio.to_thread(run_coaching_script, session_id, retrieved_context)
-        except Exception:
-            logger.exception("PIPELINE ERROR [session=%s] stage-3a-coaching-text", session_id)
-            raise
-
-    async def _stage_3b(coaching_text: dict) -> dict:
-        try:
-            return await asyncio.to_thread(run_narration_script, session_id, coaching_text)
-        except Exception:
-            logger.exception("PIPELINE ERROR [session=%s] stage-3b-narration-script", session_id)
-            raise
-
-    async def _stage_4(script: dict) -> str:
-        try:
-            gcs_path = await asyncio.to_thread(run_video_production, session_id, script)
-            return gcs_path
-        except Exception:
-            logger.exception("PIPELINE ERROR [session=%s] stage-4-video-production", session_id)
-            raise
-
     try:
         # Stage 0 — Voice memo (optional, runs if voice_memo_url is set)
-        await ctx.step.run("stage-0-voice-memo", _stage_0)  # type: ignore[arg-type]
+        await ctx.step.run(
+            "stage-0-voice-memo",
+            lambda: _run_stage("stage-0-voice-memo", run_voice_memo, session_id),
+        )  # type: ignore[arg-type]
 
         # Stage 1 — Video analysis (persists to DB; downstream stages read from there)
-        await ctx.step.run("stage-1-video-analysis", _stage_1)  # type: ignore[arg-type]
+        await ctx.step.run(
+            "stage-1-video-analysis",
+            lambda: _run_stage("stage-1-video-analysis", run_video_analysis, session_id),
+        )  # type: ignore[arg-type]
 
         # Stage 2 — RAG (pgvector similarity search)
-        retrieved_context: dict = await ctx.step.run("stage-2-rag", _stage_2)  # type: ignore[assignment, arg-type]
+        retrieved_context: dict = await ctx.step.run(  # type: ignore[assignment, arg-type]
+            "stage-2-rag",
+            lambda: _run_stage("stage-2-rag", run_rag, session_id),
+        )
 
         # Stage 3a — Coaching text → posted to chat immediately
         coaching_text: dict = await ctx.step.run(  # type: ignore[assignment, arg-type]
-            "stage-3a-coaching-text", lambda: _stage_3a(retrieved_context)
+            "stage-3a-coaching-text",
+            lambda: _run_stage(
+                "stage-3a-coaching-text", run_coaching_script, session_id, retrieved_context
+            ),
         )
 
         # Stage 3b — Narration script (feeds video production)
         narration_script: dict = await ctx.step.run(  # type: ignore[assignment, arg-type]
-            "stage-3b-narration-script", lambda: _stage_3b(coaching_text)
+            "stage-3b-narration-script",
+            lambda: _run_stage(
+                "stage-3b-narration-script", run_narration_script, session_id, coaching_text
+            ),
         )
 
         # Stage 4 — TTS + FFmpeg video composition → GCS
-        await ctx.step.run("stage-4-video-production", lambda: _stage_4(narration_script))  # type: ignore[arg-type]
+        await ctx.step.run(  # type: ignore[arg-type]
+            "stage-4-video-production",
+            lambda: _run_stage(
+                "stage-4-video-production", run_video_production, session_id, narration_script
+            ),
+        )
 
-        await ctx.step.run("mark-completed", lambda: _set_terminal_status("completed"))  # type: ignore[arg-type, return-value]
+        await ctx.step.run(  # type: ignore[arg-type, return-value]
+            "mark-completed",
+            lambda: _run_stage(
+                "set-terminal-status(completed)", _set_terminal_status_sync, "completed"
+            ),
+        )
     except Exception as exc:
         # Stage wrappers already log the specific exception; here we persist the
         # failed status so the session doesn't stay stuck at "processing".
@@ -180,7 +155,13 @@ async def cooking_pipeline(ctx: inngest.Context) -> None:
         error_msg = str(exc)
         try:
             await ctx.step.run(  # type: ignore[arg-type, return-value]
-                "mark-failed", lambda: _set_terminal_status("failed", error=error_msg)
+                "mark-failed",
+                lambda: _run_stage(
+                    "set-terminal-status(failed)",
+                    _set_terminal_status_sync,
+                    "failed",
+                    error=error_msg,
+                ),
             )
         except Exception:
             logger.exception(
