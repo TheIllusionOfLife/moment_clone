@@ -5,6 +5,7 @@ from backend.models.learner_state import LearnerState
 from backend.models.session import CookingSession
 from backend.models.user import User
 from backend.models.user_dish_progress import UserDishProgress
+from backend.models.webhook_event import WebhookEvent
 
 __all__ = [
     "User",
@@ -15,4 +16,5 @@ __all__ = [
     "ChatRoom",
     "Message",
     "CookingPrinciple",
+    "WebhookEvent",
 ]
