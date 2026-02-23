@@ -73,15 +73,19 @@ export default function NewSessionPage() {
       }
 
       // Get a signed GCS PUT URL (bypasses Cloud Run 32 MB limit)
+      const contentType = videoFile.type || "video/mp4";
       const { upload_url, gcs_path } = await apiFetch<{
         upload_url: string;
         gcs_path: string;
-      }>(`/api/sessions/${sid}/upload-url/`, { method: "POST" });
+      }>(`/api/sessions/${sid}/upload-url/`, {
+        method: "POST",
+        body: JSON.stringify({ content_type: contentType }),
+      });
 
       // Upload directly to GCS
       const gcsRes = await fetch(upload_url, {
         method: "PUT",
-        headers: { "Content-Type": videoFile.type || "video/mp4" },
+        headers: { "Content-Type": contentType },
         body: videoFile,
       });
       if (!gcsRes.ok) throw new Error(`GCS upload failed: ${gcsRes.status}`);

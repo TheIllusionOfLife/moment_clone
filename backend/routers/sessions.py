@@ -64,6 +64,10 @@ class MemoTextRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+class UploadUrlRequest(BaseModel):
+    content_type: str = "video/mp4"
+
+
 class ConfirmUploadRequest(BaseModel):
     gcs_path: str
 
@@ -188,15 +192,22 @@ async def upload_video(
 
 @router.post("/{session_id}/upload-url/")
 async def get_upload_url(
+    body: UploadUrlRequest,
     owned_session: CookingSession = Depends(get_owned_session),
 ) -> dict:
     """Return a signed GCS PUT URL so the browser can upload the video directly,
     bypassing Cloud Run's 32 MB request body limit."""
-    object_path = f"sessions/{owned_session.id}/raw_video_{uuid.uuid4().hex}.mp4"
+    if body.content_type not in ALLOWED_VIDEO_MIMES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid content type '{body.content_type}'. Allowed: {sorted(ALLOWED_VIDEO_MIMES)}",
+        )
+    ext = "mp4" if body.content_type == "video/mp4" else "mov"
+    object_path = f"sessions/{owned_session.id}/raw_video_{uuid.uuid4().hex}.{ext}"
     upload_url = await generate_signed_upload_url(
         bucket=settings.GCS_BUCKET,
         object_path=object_path,
-        content_type="video/mp4",
+        content_type=body.content_type,
     )
     if not upload_url:
         raise HTTPException(status_code=500, detail="Failed to generate upload URL")
