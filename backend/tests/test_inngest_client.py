@@ -1,7 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
 import inngest
+import pytest
+
 from backend.services.inngest_client import send_video_uploaded
+
 
 @pytest.mark.asyncio
 async def test_send_video_uploaded_emits_event():
