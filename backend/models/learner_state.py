@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
@@ -20,4 +20,4 @@ class LearnerState(SQLModel, table=True):
     next_focus: str = Field(default="")
     ready_for_next_dish: bool = Field(default=False)
 
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
