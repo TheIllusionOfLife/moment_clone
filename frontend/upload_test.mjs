@@ -6,8 +6,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const APP_URL = process.env.APP_URL ?? 'https://moment-clone.vercel.app';
 const API_URL = process.env.API_URL ?? 'https://moment-clone-api-mx6vh55q6q-an.a.run.app';
-const SCREENSHOTS = process.env.E2E_SCREENSHOTS ?? path.resolve(__dirname, '../e2e-screenshots');
-const VIDEO_PATH = process.env.E2E_VIDEO_PATH ?? path.resolve(__dirname, '../my_cooking_trimmed.mp4');
+const SCREENSHOTS = process.env.E2E_SCREENSHOTS ?? path.resolve(__dirname, '../docs/e2e-screenshots');
+const VIDEO_PATH = process.env.E2E_VIDEO_PATH ?? path.resolve(__dirname, '../sample_video/my_cooking_trimmed.mp4');
 const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
 const USER_ID = process.env.CLERK_USER_ID;
 const FAPI = 'allowing-antelope-59.clerk.accounts.dev';
