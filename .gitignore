@@ -15,12 +15,12 @@ frontend/public/workbox-*.js
 frontend/public/workbox-*.js.map
 
 # E2E testing artifacts
-e2e-screenshots/
+docs/e2e-screenshots/
 .playwright-cli/
 frontend/.playwright-cli/
-my_cooking_full.mp4
-my_cooking_short.mp4
-my_cooking_trimmed.mp4
+
+# Sample videos (large binaries, not versioned)
+sample_video/
 
 # IDE / AI tools
 .agent/

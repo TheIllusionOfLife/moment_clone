@@ -22,8 +22,11 @@
 Next.js PWA (Vercel) + Clerk (auth UI)
     ↓ REST + Clerk JWT (verified via JWKS)
 FastAPI (Cloud Run)   [Inngest mounted via inngest.fast_api.serve()]
-    ↓ store raw video
-Cloud Storage
+    ↓ POST /upload-url/ → signed GCS PUT URL (15 min expiry)
+Next.js PWA
+    ↓ PUT video directly to GCS  (bypasses Cloud Run 32 MB body limit)
+FastAPI (Cloud Run)
+    ↓ POST /confirm-upload/ → validates GCS path, stores raw_video_url
     ↓ inngest_client.send("video/uploaded", data={session_id, ...})
 Inngest (durable pipeline — each stage is a step.run())
     ├── Step 0: Voice Memo STT + extraction (optional)
@@ -250,7 +253,12 @@ POST   /api/sessions/                    → create session
                                            body: { dish_slug, custom_dish_name? }
                                            custom_dish_name required when dish_slug="free"
                                            free dish: no session cap (unlimited)
-POST   /api/sessions/{id}/upload/        → upload raw video → GCS → status="uploaded" → trigger pipeline
+POST   /api/sessions/{id}/upload-url/     → returns signed GCS PUT URL (15 min expiry)
+                                           body: { content_type: "video/mp4" | "video/quicktime" }
+PUT    <signed_url>                       → browser PUTs video directly to GCS (bypasses Cloud Run 32 MB limit)
+POST   /api/sessions/{id}/confirm-upload/ → validates gcs_path matches issued URL; stores raw_video_url
+                                           body: { gcs_path: string }
+                                           status="uploaded" → triggers pipeline
 POST   /api/sessions/{id}/voice-memo/    → upload audio self-assessment → GCS (optional)
 POST   /api/sessions/{id}/memo-text/     → save typed self-assessment text
                                            body: { text: string }
@@ -712,8 +720,8 @@ Browser (speaker)
 1. FastAPI project scaffold (uv, ruff, SQLModel, Alembic)
 2. Clerk webhook handler (`POST /webhooks/clerk/`): create User + ChatRooms on `user.created`; `GET /auth/me/`
 3. Dish + Session + LearnerState models + Alembic migrations
-4. Video upload endpoint → GCS
-5. Inngest client setup + `inngest_client.send("video/uploaded")` on upload complete
+4. Video upload flow: POST /upload-url/ (signed GCS PUT URL) → client PUT to GCS → POST /confirm-upload/ (validate gcs_path + persist raw_video_url)
+5. Inngest client setup + `inngest_client.send("video/uploaded")` on confirm-upload complete
 
 ### Phase 2 — AI Pipeline
 6. Inngest function scaffold (`@inngest_client.create_function` + `inngest.fast_api.serve()` mount)

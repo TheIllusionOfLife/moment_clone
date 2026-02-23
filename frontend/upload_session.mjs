@@ -13,7 +13,7 @@ const CLERK_SK      = process.env.CLERK_SECRET_KEY;
 const USER_ID       = process.env.CLERK_USER_ID;
 const VIDEO_PATH    = process.env.VIDEO_PATH;
 const DISH_NAME     = process.env.DISH_NAME        ?? '自由投稿テスト';
-const SCREENSHOTS   = process.env.E2E_SCREENSHOTS  ?? path.resolve(__dirname, '../e2e-screenshots');
+const SCREENSHOTS   = process.env.E2E_SCREENSHOTS  ?? path.resolve(__dirname, '../docs/e2e-screenshots');
 const FAPI          = 'allowing-antelope-59.clerk.accounts.dev';
 
 if (!CLERK_SK)   throw new Error('CLERK_SECRET_KEY env var is required');
