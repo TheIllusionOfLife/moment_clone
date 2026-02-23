@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
@@ -42,7 +42,7 @@ def test_list_dishes_includes_progress(app, user, dish, db):
         user_id=user.id,
         dish_id=dish.id,
         status="in_progress",
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
     )
     db.add(progress)
     db.commit()
