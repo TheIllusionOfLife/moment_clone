@@ -113,8 +113,29 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS", "HEAD"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "Accept",
+        "X-Requested-With",
+        "User-Agent",
+        # Inngest
+        "x-inngest-env",
+        "x-inngest-event-id-seed",
+        "x-inngest-expected-server-kind",
+        "x-inngest-framework",
+        "x-inngest-no-retry",
+        "x-inngest-req-version",
+        "x-inngest-sdk",
+        "x-inngest-server-kind",
+        "x-inngest-signature",
+        "x-inngest-sync-kind",
+        # Clerk
+        "svix-id",
+        "svix-timestamp",
+        "svix-signature",
+    ],
 )
 
 app.include_router(auth.router)
