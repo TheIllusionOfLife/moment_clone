@@ -1,5 +1,5 @@
 import sys
-from importlib import reload, import_module
+from importlib import import_module
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -99,8 +99,6 @@ async def test_generate_signed_upload_url_success(gcs_service):
     content_type = "video/mp4"
     expiry = 15
     expected_url = "https://storage.googleapis.com/signed-url"
-
-    mock_storage = gcs_service.storage
 
     mock_client = MagicMock()
     mock_bucket = MagicMock()
