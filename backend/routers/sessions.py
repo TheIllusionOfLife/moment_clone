@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -48,6 +49,33 @@ async def get_owned_session(
 # ---------------------------------------------------------------------------
 
 
+class CookingSessionResponse(BaseModel):
+    id: int
+    user_id: int
+    dish_id: int
+    session_number: int
+    custom_dish_name: str | None = None
+    status: str
+    raw_video_url: str | None = None
+    voice_memo_url: str | None = None
+    self_ratings: dict | None = Field(default_factory=dict)
+    voice_transcript: str | None = None
+    structured_input: dict | None = Field(default_factory=dict)
+    video_analysis: dict | None = Field(default_factory=dict)
+    coaching_text: dict | None = Field(default_factory=dict)
+    coaching_text_delivered_at: datetime | None = None
+    narration_script: dict | None = Field(default_factory=dict)
+    coaching_video_url: str | None = None
+    pipeline_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class UploadUrlResponse(BaseModel):
+    upload_url: str
+    gcs_path: str
+
+
 class CreateSessionRequest(BaseModel):
     dish_slug: str
     custom_dish_name: str | None = None  # required when dish_slug == "free"
@@ -77,12 +105,12 @@ class ConfirmUploadRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/")
+@router.get("/", response_model=list[CookingSessionResponse])
 async def list_sessions(
     dish_slug: str | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
-) -> list[dict]:
+) -> list[CookingSessionResponse]:
     stmt = select(CookingSession).where(CookingSession.user_id == current_user.id)
     if dish_slug:
         dish = (await db.execute(select(Dish).where(Dish.slug == dish_slug))).scalars().first()
@@ -92,15 +120,17 @@ async def list_sessions(
     sessions = (
         (await db.execute(stmt.order_by(col(CookingSession.created_at).desc()))).scalars().all()
     )
-    return [await _session_to_dict(s) for s in sessions]
+    if not sessions:
+        return []
+    return await asyncio.gather(*[_create_session_response(s) for s in sessions])
 
 
-@router.post("/", status_code=status.HTTP_201_CREATED)
+@router.post("/", status_code=status.HTTP_201_CREATED, response_model=CookingSessionResponse)
 async def create_session(
     body: CreateSessionRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
-) -> dict:
+) -> CookingSessionResponse:
     dish = (await db.execute(select(Dish).where(Dish.slug == body.dish_slug))).scalars().first()
     if dish is None:
         raise HTTPException(status_code=404, detail="Dish not found")
@@ -141,15 +171,15 @@ async def create_session(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Session already exists") from err
     await db.refresh(cooking_session)
-    return await _session_to_dict(cooking_session)
+    return await _create_session_response(cooking_session)
 
 
-@router.post("/{session_id}/upload/")
+@router.post("/{session_id}/upload/", response_model=CookingSessionResponse)
 async def upload_video(
     video: UploadFile = File(...),
     owned_session: CookingSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_async_session),
-) -> dict:
+) -> CookingSessionResponse:
     if video.content_type not in ALLOWED_VIDEO_MIMES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -187,15 +217,15 @@ async def upload_video(
     assert owned_session.id is not None  # always set after db.refresh()
     await send_video_uploaded(owned_session.id, owned_session.user_id)
 
-    return await _session_to_dict(owned_session)
+    return await _create_session_response(owned_session)
 
 
-@router.post("/{session_id}/upload-url/")
+@router.post("/{session_id}/upload-url/", response_model=UploadUrlResponse)
 async def get_upload_url(
     body: UploadUrlRequest,
     owned_session: CookingSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_async_session),
-) -> dict:
+) -> UploadUrlResponse:
     """Return a signed GCS PUT URL so the browser can upload the video directly,
     bypassing Cloud Run's 32 MB request body limit.
 
@@ -222,15 +252,15 @@ async def get_upload_url(
     db.add(owned_session)
     await db.commit()
 
-    return {"upload_url": upload_url, "gcs_path": object_path}
+    return UploadUrlResponse(upload_url=upload_url, gcs_path=object_path)
 
 
-@router.post("/{session_id}/confirm-upload/")
+@router.post("/{session_id}/confirm-upload/", response_model=CookingSessionResponse)
 async def confirm_upload(
     body: ConfirmUploadRequest,
     owned_session: CookingSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_async_session),
-) -> dict:
+) -> CookingSessionResponse:
     """Record the GCS path after the browser has PUT the video directly to GCS,
     then trigger the pipeline.
 
@@ -260,15 +290,15 @@ async def confirm_upload(
     assert owned_session.id is not None
     await send_video_uploaded(owned_session.id, owned_session.user_id)
 
-    return await _session_to_dict(owned_session)
+    return await _create_session_response(owned_session)
 
 
-@router.post("/{session_id}/voice-memo/")
+@router.post("/{session_id}/voice-memo/", response_model=CookingSessionResponse)
 async def upload_voice_memo(
     audio: UploadFile = File(...),
     owned_session: CookingSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_async_session),
-) -> dict:
+) -> CookingSessionResponse:
     if audio.content_type not in ALLOWED_AUDIO_MIMES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -298,29 +328,29 @@ async def upload_voice_memo(
     db.add(owned_session)
     await db.commit()
     await db.refresh(owned_session)
-    return await _session_to_dict(owned_session)
+    return await _create_session_response(owned_session)
 
 
-@router.patch("/{session_id}/ratings/")
+@router.patch("/{session_id}/ratings/", response_model=CookingSessionResponse)
 async def save_ratings(
     body: RatingsRequest,
     owned_session: CookingSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_async_session),
-) -> dict:
+) -> CookingSessionResponse:
     owned_session.self_ratings = body.model_dump()
     owned_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
     db.add(owned_session)
     await db.commit()
     await db.refresh(owned_session)
-    return await _session_to_dict(owned_session)
+    return await _create_session_response(owned_session)
 
 
-@router.post("/{session_id}/memo-text/")
+@router.post("/{session_id}/memo-text/", response_model=CookingSessionResponse)
 async def save_memo_text(
     body: MemoTextRequest,
     owned_session: CookingSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_async_session),
-) -> dict:
+) -> CookingSessionResponse:
     """Accept a typed self-assessment text instead of a voice memo file.
 
     Clears voice_memo_url so the pipeline text path always takes precedence —
@@ -332,14 +362,14 @@ async def save_memo_text(
     db.add(owned_session)
     await db.commit()
     await db.refresh(owned_session)
-    return await _session_to_dict(owned_session)
+    return await _create_session_response(owned_session)
 
 
-@router.get("/{session_id}/")
+@router.get("/{session_id}/", response_model=CookingSessionResponse)
 async def get_session_detail(
     owned_session: CookingSession = Depends(get_owned_session),
-) -> dict:
-    return await _session_to_dict(owned_session)
+) -> CookingSessionResponse:
+    return await _create_session_response(owned_session)
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +377,7 @@ async def get_session_detail(
 # ---------------------------------------------------------------------------
 
 
-async def _session_to_dict(s: CookingSession) -> dict:
+async def _create_session_response(s: CookingSession) -> CookingSessionResponse:
     raw_video_url = None
     if s.raw_video_url:
         raw_video_url = await generate_signed_url(
@@ -362,26 +392,29 @@ async def _session_to_dict(s: CookingSession) -> dict:
             object_path=s.coaching_video_gcs_path,
             expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
         )
-    return {
-        "id": s.id,
-        "user_id": s.user_id,
-        "dish_id": s.dish_id,
-        "session_number": s.session_number,
-        "custom_dish_name": s.custom_dish_name,
-        "status": s.status,
-        "raw_video_url": raw_video_url,
-        "voice_memo_url": s.voice_memo_url,
-        "self_ratings": s.self_ratings or {},
-        "voice_transcript": s.voice_transcript,
-        "structured_input": s.structured_input or {},
-        "video_analysis": s.video_analysis or {},
-        "coaching_text": s.coaching_text or {},
-        "coaching_text_delivered_at": (
-            s.coaching_text_delivered_at.isoformat() if s.coaching_text_delivered_at else None
-        ),
-        "narration_script": s.narration_script or {},
-        "coaching_video_url": coaching_video_url,
-        "pipeline_error": s.pipeline_error,
-        "created_at": s.created_at.isoformat(),
-        "updated_at": s.updated_at.isoformat(),
-    }
+
+    # Ensure ID is present (it should be for DB records)
+    if s.id is None:
+        raise ValueError("Session ID cannot be None")
+
+    return CookingSessionResponse(
+        id=s.id,
+        user_id=s.user_id,
+        dish_id=s.dish_id,
+        session_number=s.session_number,
+        custom_dish_name=s.custom_dish_name,
+        status=s.status,
+        raw_video_url=raw_video_url,
+        voice_memo_url=s.voice_memo_url,
+        self_ratings=s.self_ratings or {},
+        voice_transcript=s.voice_transcript,
+        structured_input=s.structured_input or {},
+        video_analysis=s.video_analysis or {},
+        coaching_text=s.coaching_text or {},
+        coaching_text_delivered_at=s.coaching_text_delivered_at,
+        narration_script=s.narration_script or {},
+        coaching_video_url=coaching_video_url,
+        pipeline_error=s.pipeline_error,
+        created_at=s.created_at,
+        updated_at=s.updated_at,
+    )
