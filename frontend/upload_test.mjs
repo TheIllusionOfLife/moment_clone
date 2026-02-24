@@ -144,10 +144,7 @@ async function pollSession(sessionId, token) {
   });
   const uploadData = await uploadRes.json().catch(() => ({}));
   console.log(`  POST /api/sessions/${sessionId}/upload/ → ${uploadRes.status}`, JSON.stringify(uploadData).slice(0, 200));
-  // 500 on this endpoint is a known signed-URL generation bug on Cloud Run (Compute Engine creds can't sign blobs).
-  // The upload itself succeeds — session status is set to "uploaded" and pipeline is triggered.
-  // Treat 500 as a warning, not a fatal error.
-  if (!uploadRes.ok && uploadRes.status !== 500) throw new Error(`Upload failed: ${JSON.stringify(uploadData)}`);
+  if (!uploadRes.ok) throw new Error(`Upload failed: ${JSON.stringify(uploadData)}`);
 
   // Step 3c: Save ratings
   await fetch(`${API_URL}/api/sessions/${sessionId}/ratings/`, {
