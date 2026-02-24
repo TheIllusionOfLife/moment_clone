@@ -1,10 +1,12 @@
 import uuid
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
+
 from backend.models.session import CookingSession
 from backend.routers.sessions import _session_to_dict
+
 
 @pytest.mark.asyncio
 async def test_session_to_dict_handles_gcs_failure():
