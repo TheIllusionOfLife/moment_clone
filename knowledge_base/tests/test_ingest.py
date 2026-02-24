@@ -1,13 +1,12 @@
 import sys
 from unittest.mock import MagicMock
-import pathlib
-import pytest
 
 # Mock google.genai to avoid import errors or API calls during test collection/execution
 # We must do this before importing knowledge_base.ingest because it initializes the client at module level
-sys.modules["google.genai"] = MagicMock() # type: ignore
+sys.modules["google.genai"] = MagicMock()  # type: ignore
 
-from knowledge_base.ingest import _parse_principles # noqa: E402
+from knowledge_base.ingest import _parse_principles  # noqa: E402
+
 
 def test_parse_principles_basic(tmp_path):
     """Test parsing a standard markdown file with headers and lists."""
@@ -30,6 +29,7 @@ def test_parse_principles_basic(tmp_path):
 
     assert _parse_principles(md_file) == expected
 
+
 def test_parse_principles_fallback_category(tmp_path):
     """Test using filename as fallback category when no headers are present."""
     md_file = tmp_path / "fallback.md"
@@ -46,11 +46,13 @@ def test_parse_principles_fallback_category(tmp_path):
 
     assert _parse_principles(md_file) == expected
 
+
 def test_parse_principles_empty_file(tmp_path):
     """Test parsing an empty file returns empty list."""
     md_file = tmp_path / "empty.md"
     md_file.write_text("", encoding="utf-8")
     assert _parse_principles(md_file) == []
+
 
 def test_parse_principles_no_list_items(tmp_path):
     """Test file with content but no list items returns empty list."""
@@ -62,6 +64,7 @@ def test_parse_principles_no_list_items(tmp_path):
         encoding="utf-8"
     )
     assert _parse_principles(md_file) == []
+
 
 def test_parse_principles_whitespace_handling(tmp_path):
     """Test handling of whitespace around headers and list items."""
@@ -79,6 +82,7 @@ def test_parse_principles_whitespace_handling(tmp_path):
 
     assert _parse_principles(md_file) == expected
 
+
 def test_parse_principles_mixed_formatting(tmp_path):
     """Test mixed list markers and empty lines."""
     md_file = tmp_path / "mixed.md"
@@ -87,7 +91,7 @@ def test_parse_principles_mixed_formatting(tmp_path):
         "- Item 1\n"
         "\n"
         "* Item 2\n"
-        "  - Item 3 (indented)\n", # Indented items are NOT handled by current logic unless they match startswith("- ")
+        "  - Item 3 (indented)\n",  # Indented items are NOT handled by current logic unless they match startswith("- ")
         encoding="utf-8"
     )
 
