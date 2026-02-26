@@ -38,12 +38,12 @@ async def cooking_pipeline(ctx: inngest.Context) -> None:
     # Validate event payload early — malformed events should not burn all retries.
     session_id = ctx.event.data.get("session_id")
     if not isinstance(session_id, int):
-        print(f"ERROR: cooking-pipeline received invalid session_id: {session_id!r}")
+        logger.error("cooking-pipeline received invalid session_id: %r", session_id)
         return
 
     user_id = ctx.event.data.get("user_id")
     if not isinstance(user_id, int):
-        print(f"ERROR: cooking-pipeline received invalid user_id: {user_id!r}")
+        logger.error("cooking-pipeline received invalid user_id: %r", user_id)
         return
 
     # Idempotency guard: use SELECT FOR UPDATE to prevent concurrent invocations
