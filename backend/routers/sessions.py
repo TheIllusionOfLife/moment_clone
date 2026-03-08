@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -15,6 +16,8 @@ from backend.models.session import CookingSession
 from backend.models.user import User
 from backend.services.gcs import generate_signed_upload_url, generate_signed_url, upload_file
 from backend.services.inngest_client import send_video_uploaded
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -350,18 +353,26 @@ async def get_session_detail(
 async def _session_to_dict(s: CookingSession) -> dict:
     raw_video_url = None
     if s.raw_video_url:
-        raw_video_url = await generate_signed_url(
-            bucket=settings.GCS_BUCKET,
-            object_path=s.raw_video_url,
-            expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
-        )
+        try:
+            raw_video_url = await generate_signed_url(
+                bucket=settings.GCS_BUCKET,
+                object_path=s.raw_video_url,
+                expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to generate raw_video_url: {e}")
+
     coaching_video_url = None
     if s.coaching_video_gcs_path:
-        coaching_video_url = await generate_signed_url(
-            bucket=settings.GCS_BUCKET,
-            object_path=s.coaching_video_gcs_path,
-            expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
-        )
+        try:
+            coaching_video_url = await generate_signed_url(
+                bucket=settings.GCS_BUCKET,
+                object_path=s.coaching_video_gcs_path,
+                expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to generate coaching_video_url: {e}")
+
     return {
         "id": s.id,
         "user_id": s.user_id,
