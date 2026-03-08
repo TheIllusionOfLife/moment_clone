@@ -19,6 +19,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.execute("CREATE SCHEMA IF NOT EXISTS extensions;")
     op.execute("ALTER EXTENSION vector SET SCHEMA extensions;")
 
 
