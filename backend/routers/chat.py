@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from google import genai
 from google.genai import types
@@ -92,23 +94,40 @@ async def list_messages(
         .all()
     )
 
+    # reversed() returns an iterator, so we convert to list to iterate multiple times if needed
+    chronological_messages = list(reversed(messages))
+
+    video_url_tasks = []
+    video_url_indices = []
+
+    for i, m in enumerate(chronological_messages):
+        if m.video_gcs_path:
+            video_url_tasks.append(
+                generate_signed_url(
+                    bucket=settings.GCS_BUCKET,
+                    object_path=m.video_gcs_path,
+                    expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
+                )
+            )
+            video_url_indices.append(i)
+
+    # Execute all signed URL generations in parallel
+    video_urls = await asyncio.gather(*video_url_tasks) if video_url_tasks else []
+
+    # Map results back to messages
+    url_map = dict(zip(video_url_indices, video_urls, strict=True))
+
     results = []
-    for m in reversed(messages):  # return chronological order
+    for i, m in enumerate(chronological_messages):
         msg_dict: dict = {
             "id": m.id,
             "sender": m.sender,
             "text": m.text,
-            "video_url": None,
+            "video_url": url_map.get(i),  # None if not in map
             "metadata": m.msg_metadata or {},
             "session_id": m.session_id,
             "created_at": m.created_at.isoformat(),
         }
-        if m.video_gcs_path:
-            msg_dict["video_url"] = await generate_signed_url(
-                bucket=settings.GCS_BUCKET,
-                object_path=m.video_gcs_path,
-                expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
-            )
         results.append(msg_dict)
 
     return {"page": page, "page_size": page_size, "messages": results}
