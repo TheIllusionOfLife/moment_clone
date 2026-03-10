@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     CLERK_ISSUER: str = ""  # optional; set to verify JWT iss claim (e.g. https://<clerk-domain>)
 
     # CORS — comma-separated list of allowed origins
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
+    CORS_ORIGINS: str = ""
 
     # Google Cloud
     GOOGLE_CLOUD_PROJECT: str = ""
