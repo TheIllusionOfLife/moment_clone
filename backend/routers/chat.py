@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from google import genai
 from google.genai import types
@@ -92,8 +94,7 @@ async def list_messages(
         .all()
     )
 
-    results = []
-    for m in reversed(messages):  # return chronological order
+    async def _msg_to_dict(m: Message) -> dict:
         msg_dict: dict = {
             "id": m.id,
             "sender": m.sender,
@@ -109,7 +110,9 @@ async def list_messages(
                 object_path=m.video_gcs_path,
                 expiry_days=settings.GCS_SIGNED_URL_EXPIRY_DAYS,
             )
-        results.append(msg_dict)
+        return msg_dict
+
+    results = list(await asyncio.gather(*[_msg_to_dict(m) for m in reversed(messages)]))
 
     return {"page": page, "page_size": page_size, "messages": results}
 
