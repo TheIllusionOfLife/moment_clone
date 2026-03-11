@@ -61,7 +61,8 @@ def test_upload_video_invalid_mime_rejected(client, cooking_session):
 
 
 def test_upload_video_valid_mime_accepted(client, cooking_session):
-    small_mp4 = b"\x00" * 100
+    # Minimal MP4 header to pass magic byte check
+    small_mp4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 100
     with (
         patch("backend.routers.sessions.upload_file", new_callable=AsyncMock) as mock_upload,
         patch("backend.routers.sessions.send_video_uploaded", new_callable=AsyncMock),
@@ -95,7 +96,9 @@ def test_upload_video_exceeds_limit_rejected(monkeypatch, client, cooking_sessio
     import backend.routers.sessions as sessions_module
 
     monkeypatch.setattr(sessions_module, "MAX_VIDEO_BYTES", 10)
-    oversized = b"\x00" * 11
+    # Minimal MP4 header (24 bytes) exceeds the 10 byte limit
+    # filetype needs enough bytes to guess correctly.
+    oversized = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 1024
     resp = client.post(
         f"/api/sessions/{cooking_session.id}/upload/",
         files={"video": ("big.mp4", oversized, "video/mp4")},
