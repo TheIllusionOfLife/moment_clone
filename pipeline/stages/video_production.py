@@ -84,6 +84,146 @@ def _synthesize_tts(tts_client: texttospeech.TextToSpeechClient, text: str, out_
         f.write(response.audio_content)
 
 
+def _calculate_clamped_key_moment(session, raw_video_path: str) -> float:
+    """Calculate the key moment start time, clamped to fit within the video."""
+    try:
+        key_moment = max(
+            0.0, float((session.video_analysis or {}).get("key_moment_seconds", 0) or 0)
+        )
+    except (TypeError, ValueError):
+        key_moment = 0.0
+    raw_duration = _get_audio_duration(raw_video_path)
+    # Ensure the 30s clip fits within the video
+    return min(key_moment, max(0.0, raw_duration - 30))
+
+
+def _create_intro_segment(raw_video_path: str, part1_audio_path: str, output_path: str) -> None:
+    """Compose intro segment — cooking video from t=0 + part1 narration."""
+    part1_duration = _get_audio_duration(part1_audio_path)
+    _run_ffmpeg(
+        [
+            "-stream_loop",
+            "-1",
+            "-i",
+            raw_video_path,
+            "-i",
+            part1_audio_path,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-vf",
+            "scale=1280:720:force_original_aspect_ratio=decrease,"
+            "pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-t",
+            str(part1_duration),
+            output_path,
+        ]
+    )
+
+
+def _extract_key_moment_clip(raw_video_path: str, start_time: float, output_path: str) -> None:
+    """Extract 30-second key-moment clip, normalised to 1280x720."""
+    _run_ffmpeg(
+        [
+            "-ss",
+            str(start_time),
+            "-i",
+            raw_video_path,
+            "-t",
+            "30",
+            "-vf",
+            "scale=1280:720:force_original_aspect_ratio=decrease,"
+            "pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            output_path,
+        ]
+    )
+
+
+def _create_key_moment_segment(clip_path: str, part2_audio_path: str, output_path: str) -> None:
+    """Compose key-moment segment (clip + part2 audio)."""
+    part2_duration = _get_audio_duration(part2_audio_path)
+    _run_ffmpeg(
+        [
+            "-stream_loop",
+            "-1",
+            "-i",
+            clip_path,
+            "-i",
+            part2_audio_path,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-t",
+            str(part2_duration),
+            output_path,
+        ]
+    )
+
+
+def _concat_segments(
+    intro_path: str, key_moment_path: str, concat_list_path: str, output_path: str
+) -> None:
+    """Concatenate intro + key-moment via concat demuxer."""
+    with open(concat_list_path, "w") as f:
+        f.write(f"file '{intro_path}'\n")
+        f.write(f"file '{key_moment_path}'\n")
+
+    _run_ffmpeg(
+        [
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat_list_path,
+            "-c",
+            "copy",
+            output_path,
+        ]
+    )
+
+
+def _upload_to_gcs(
+    gcs_client: storage.Client, bucket_name: str, local_path: str, session_id: int
+) -> str:
+    """Upload coaching video to GCS."""
+    gcs_path = f"sessions/{session_id}/coaching_video.mp4"
+    with open(local_path, "rb") as f:
+        gcs_client.bucket(bucket_name).blob(gcs_path).upload_from_file(f, content_type="video/mp4")
+    return gcs_path
+
+
+def _notify_user(session_id: int, user_id: int, gcs_path: str) -> None:
+    """Post coaching video message to coaching chat room."""
+    with DBSession(get_engine()) as db:
+        coaching_room = get_coaching_room(user_id, db)
+        if coaching_room.id is None:
+            raise RuntimeError(f"Coaching room for user {user_id} has no ID")
+        post_message(
+            coaching_room.id,
+            "ai",
+            session_id,
+            video_gcs_path=gcs_path,
+            db=db,
+        )
+
+
 def run_video_production(session_id: int, narration_script: dict) -> str:
     """Compose coaching video from TTS audio + raw video clip and upload to GCS.
 
@@ -114,132 +254,27 @@ def run_video_production(session_id: int, narration_script: dict) -> str:
         _synthesize_tts(tts_client, narration_script["part2"], part2_audio_path)
 
         # Step 3: Resolve key_moment_seconds, clamped so the 30-second clip fits.
-        try:
-            key_moment = max(
-                0.0, float((session.video_analysis or {}).get("key_moment_seconds", 0) or 0)
-            )
-        except (TypeError, ValueError):
-            key_moment = 0.0
-        raw_duration = _get_audio_duration(raw_video_path)
-        key_moment = min(key_moment, max(0.0, raw_duration - 30))
+        key_moment = _calculate_clamped_key_moment(session, raw_video_path)
 
         # Step 4: Compose intro segment — cooking video from t=0 + part1 narration.
-        # -stream_loop -1 loops the source so short videos don't run out before
-        # the narration ends; -t limits output to exactly part1_duration seconds.
-        part1_duration = _get_audio_duration(part1_audio_path)
-        _run_ffmpeg(
-            [
-                "-stream_loop",
-                "-1",
-                "-i",
-                raw_video_path,
-                "-i",
-                part1_audio_path,
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-vf",
-                "scale=1280:720:force_original_aspect_ratio=decrease,"
-                "pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-                "-c:v",
-                "libx264",
-                "-c:a",
-                "aac",
-                "-t",
-                str(part1_duration),
-                intro_segment_path,
-            ]
-        )
+        _create_intro_segment(raw_video_path, part1_audio_path, intro_segment_path)
 
         # Step 4b: Extract 30-second key-moment clip, normalised to 1280x720.
-        # Done after the intro so raw_duration is already known.
-        _run_ffmpeg(
-            [
-                "-ss",
-                str(key_moment),
-                "-i",
-                raw_video_path,
-                "-t",
-                "30",
-                "-vf",
-                "scale=1280:720:force_original_aspect_ratio=decrease,"
-                "pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-                "-c:v",
-                "libx264",
-                "-c:a",
-                "aac",
-                "-movflags",
-                "+faststart",
-                key_moment_clip_path,
-            ]
-        )
+        _extract_key_moment_clip(raw_video_path, key_moment, key_moment_clip_path)
 
         # Step 5: Compose key-moment segment (clip + part2 audio).
-        # -stream_loop -1 loops the clip so short source videos don't end before
-        # the narration finishes.  -t limits output to exactly part2_duration.
-        # Explicit -map prevents FFmpeg selecting original video audio over narration.
-        part2_duration = _get_audio_duration(part2_audio_path)
-        _run_ffmpeg(
-            [
-                "-stream_loop",
-                "-1",
-                "-i",
-                key_moment_clip_path,
-                "-i",
-                part2_audio_path,
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-c:v",
-                "libx264",
-                "-c:a",
-                "aac",
-                "-t",
-                str(part2_duration),
-                key_moment_segment_path,
-            ]
-        )
+        _create_key_moment_segment(key_moment_clip_path, part2_audio_path, key_moment_segment_path)
 
         # Step 6: Concatenate intro + key-moment via concat demuxer.
-        with open(concat_list_path, "w") as f:
-            f.write(f"file '{intro_segment_path}'\n")
-            f.write(f"file '{key_moment_segment_path}'\n")
-
-        _run_ffmpeg(
-            [
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                concat_list_path,
-                "-c",
-                "copy",
-                coaching_video_path,
-            ]
+        _concat_segments(
+            intro_segment_path, key_moment_segment_path, concat_list_path, coaching_video_path
         )
 
         # Step 7: Upload coaching video to GCS.
-        gcs_path = f"sessions/{session_id}/coaching_video.mp4"
-        with open(coaching_video_path, "rb") as f:
-            gcs_client.bucket(settings.GCS_BUCKET).blob(gcs_path).upload_from_file(
-                f, content_type="video/mp4"
-            )
+        gcs_path = _upload_to_gcs(gcs_client, settings.GCS_BUCKET, coaching_video_path, session_id)
 
     # Step 8: Post coaching video message to coaching chat room.
-    with DBSession(get_engine()) as db:
-        coaching_room = get_coaching_room(session.user_id, db)
-        if coaching_room.id is None:
-            raise RuntimeError(f"Coaching room for user {session.user_id} has no ID")
-        post_message(
-            coaching_room.id,
-            "ai",
-            session_id,
-            video_gcs_path=gcs_path,
-            db=db,
-        )
+    _notify_user(session_id, session.user_id, gcs_path)
 
     # Step 9: Persist coaching_video_gcs_path on session.
     update_session_fields(session_id, coaching_video_gcs_path=gcs_path)
