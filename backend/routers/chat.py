@@ -200,11 +200,15 @@ def _generate_coaching_reply(
         history_messages = list(reversed(history))
         if history_messages and history_messages[-1].sender == "user":
             history_messages = history_messages[:-1]
-        history_text = "\n".join(
-            f"{'ユーザー' if m.sender == 'user' else 'コーチ'}: {m.text}"
-            for m in history_messages
-            if m.text
-        )
+        # Build structured chat history for Gemini
+        history_contents: list[types.Content] = []
+        for m in history_messages:
+            if not m.text:
+                continue
+            role = "user" if m.sender == "user" else "model"
+            history_contents.append(
+                types.Content(role=role, parts=[types.Part.from_text(text=m.text)])
+            )
 
         # Build context from most recent completed session
         context_parts: list[str] = []
@@ -236,19 +240,23 @@ def _generate_coaching_reply(
             )
         else:
             context_str = "\n".join(context_parts)
-            # Use system_instruction to isolate user content from AI persona prompt,
-            # preventing prompt injection via crafted user messages.
+            # Use structured history (contents) and system_instruction to prevent prompt injection
             system_instruction = (
                 "あなたは料理コーチです。ユーザーの料理スキル向上を支援します。"
                 "以下のコンテキストを参考に、具体的で実践的なアドバイスを日本語で提供してください。\n\n"
-                f"コンテキスト:\n{context_str}\n\n"
-                f"会話履歴:\n{history_text}"
+                f"コンテキスト:\n{context_str}"
             )
+
+            # Append current user message to history
+            history_contents.append(
+                types.Content(role="user", parts=[types.Part.from_text(text=user_text)])
+            )
+
             gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
             try:
                 response = gemini_client.models.generate_content(
                     model=settings.GEMINI_MODEL,
-                    contents=user_text,
+                    contents=history_contents,
                     config=types.GenerateContentConfig(system_instruction=system_instruction),
                 )
                 reply = response.text or ""
