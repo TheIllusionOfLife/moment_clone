@@ -44,6 +44,18 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_SECRET: str = ""
     STRIPE_PRICE_ID_MONTHLY: str = ""
 
+    # File Uploads
+    ALLOWED_VIDEO_MIMES: set[str] = {"video/mp4", "video/quicktime"}
+    MAX_VIDEO_BYTES: int = 500 * 1024 * 1024  # 500 MB
+    ALLOWED_AUDIO_MIMES: set[str] = {
+        "audio/mp4",
+        "audio/mpeg",
+        "audio/wav",
+        "audio/webm",
+        "audio/m4a",
+    }
+    MAX_AUDIO_BYTES: int = 100 * 1024 * 1024  # 100 MB
+
     @property
     def ASYNC_DATABASE_URL(self) -> str:
         url = self.DATABASE_URL

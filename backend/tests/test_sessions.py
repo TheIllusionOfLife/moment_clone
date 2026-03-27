@@ -92,16 +92,17 @@ def test_upload_audio_invalid_mime_rejected(client, cooking_session):
 
 def test_upload_video_exceeds_limit_rejected(monkeypatch, client, cooking_session):
     """Uploading more than MAX_VIDEO_BYTES returns 422 (MAX_VIDEO_BYTES patched to 10 bytes)."""
-    import backend.routers.sessions as sessions_module
+    from backend.core.settings import settings
 
-    monkeypatch.setattr(sessions_module, "MAX_VIDEO_BYTES", 10)
+    monkeypatch.setattr(settings, "MAX_VIDEO_BYTES", 10)
     oversized = b"\x00" * 11
     resp = client.post(
         f"/api/sessions/{cooking_session.id}/upload/",
         files={"video": ("big.mp4", oversized, "video/mp4")},
     )
     assert resp.status_code == 422
-    assert "500 MB" in resp.json()["detail"]
+    # 10 bytes // (1024 * 1024) is 0 MB
+    assert "0 MB" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
