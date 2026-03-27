@@ -16,7 +16,6 @@ pipeline/functions.py.
 
 import json as _json
 import os
-import subprocess
 import tempfile
 
 from google.cloud import storage, texttospeech  # type: ignore[attr-defined]
@@ -30,22 +29,17 @@ from pipeline.stages.db_helpers import (
     post_message,
     update_session_fields,
 )
+from pipeline.utils import run_command
 
 
 def _run_ffmpeg(args: list[str]) -> None:
     """Run FFmpeg; re-raise as RuntimeError with stderr on non-zero exit."""
-    result = subprocess.run(
-        ["ffmpeg", "-y", *args],
-        check=False,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg failed (exit {result.returncode}): {result.stderr.decode()}")
+    run_command(["ffmpeg", "-y", *args])
 
 
 def _get_audio_duration(audio_path: str) -> float:
     """Return duration in seconds of an audio file via ffprobe."""
-    probe = subprocess.run(
+    stdout = run_command(
         [
             "ffprobe",
             "-v",
@@ -54,11 +48,9 @@ def _get_audio_duration(audio_path: str) -> float:
             "json",
             "-show_format",
             audio_path,
-        ],
-        capture_output=True,
-        check=True,
+        ]
     )
-    data = _json.loads(probe.stdout)
+    data = _json.loads(stdout)
     try:
         return float(data["format"]["duration"])
     except (KeyError, TypeError) as e:
