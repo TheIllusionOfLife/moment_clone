@@ -1,7 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Session, col, select
 
@@ -115,7 +115,7 @@ async def list_messages(
 
 
 class SendMessageRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=4096)
 
 
 @router.post("/rooms/{room_type}/messages/", status_code=status.HTTP_201_CREATED)

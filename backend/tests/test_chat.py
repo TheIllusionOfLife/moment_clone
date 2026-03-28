@@ -219,3 +219,13 @@ def test_generate_coaching_reply_fallback_no_session(engine, db, user, chatroom,
     assert len(ai_messages) == 1
     # Fallback response should prompt user to complete a session
     assert ai_messages[0].text  # non-empty
+
+
+def test_send_message_too_long_rejected(client):
+    """Test sending a message larger than expected limit (4096)."""
+    huge_text = "a" * 5000  # > 4096
+    resp = client.post(
+        "/api/chat/rooms/coaching/messages/",
+        json={"text": huge_text},
+    )
+    assert resp.status_code == 422
