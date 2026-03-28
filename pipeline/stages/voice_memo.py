@@ -7,10 +7,10 @@ from google.cloud import speech, storage  # type: ignore[attr-defined]
 
 from backend.core.settings import settings
 from pipeline.stages.db_helpers import (
-    _parse_json_response,
     get_session_with_dish,
     update_session_fields,
 )
+from pipeline.utils import parse_json_response
 
 
 def run_voice_memo(session_id: int) -> dict:
@@ -35,7 +35,7 @@ def run_voice_memo(session_id: int) -> dict:
             model=settings.GEMINI_MODEL, contents=prompt
         )
         try:
-            structured_input = _parse_json_response(gemini_response.text or "")
+            structured_input = parse_json_response(gemini_response.text or "")
         except ValueError:
             structured_input = {}
         update_session_fields(session_id, structured_input=structured_input)
@@ -81,7 +81,7 @@ def run_voice_memo(session_id: int) -> dict:
     )
 
     try:
-        structured_input = _parse_json_response(gemini_response.text or "")
+        structured_input = parse_json_response(gemini_response.text or "")
     except ValueError:
         structured_input = {}
 

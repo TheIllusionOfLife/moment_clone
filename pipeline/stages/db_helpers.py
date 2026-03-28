@@ -6,8 +6,6 @@ db session are used by stages that need to bundle multiple operations in one
 transaction (e.g. coaching_script's LearnerState update).
 """
 
-import json
-
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session as DBSession
 from sqlmodel import select
@@ -17,22 +15,6 @@ from backend.models.chat import ChatRoom, Message
 from backend.models.dish import Dish
 from backend.models.learner_state import LearnerState
 from backend.models.session import CookingSession
-
-
-def _parse_json_response(text: str) -> dict:
-    """Extract and parse the first JSON object from a Gemini response.
-
-    Uses JSONDecoder.raw_decode to find the exact boundary of the first JSON
-    object, handling filler text before/after and nested objects correctly.
-    """
-    start = text.find("{")
-    if start == -1:
-        raise ValueError(f"No JSON object found in response: {text[:200]}")
-    try:
-        result, _ = json.JSONDecoder().raw_decode(text, start)
-        return result  # type: ignore[no-any-return]
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse JSON from response: {text[:200]}") from e
 
 
 def get_session_with_dish(session_id: int) -> tuple[CookingSession, Dish]:

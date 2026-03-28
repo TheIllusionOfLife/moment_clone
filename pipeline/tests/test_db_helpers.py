@@ -5,7 +5,6 @@ from unittest.mock import patch
 import pytest
 
 from pipeline.stages.db_helpers import (
-    _parse_json_response,
     get_coaching_room,
     get_cooking_videos_room,
     get_or_create_learner_state,
@@ -13,31 +12,6 @@ from pipeline.stages.db_helpers import (
     post_message,
     update_session_fields,
 )
-
-# ---------------------------------------------------------------------------
-# _parse_json_response
-# ---------------------------------------------------------------------------
-
-
-def test_parse_json_plain():
-    raw = '{"key": "value"}'
-    assert _parse_json_response(raw) == {"key": "value"}
-
-
-def test_parse_json_with_backtick_fence():
-    raw = '```json\n{"key": "value"}\n```'
-    assert _parse_json_response(raw) == {"key": "value"}
-
-
-def test_parse_json_with_plain_fence():
-    raw = '```\n{"key": "value"}\n```'
-    assert _parse_json_response(raw) == {"key": "value"}
-
-
-def test_parse_json_invalid_raises():
-    with pytest.raises(ValueError, match="No JSON object found"):
-        _parse_json_response("not json")
-
 
 # ---------------------------------------------------------------------------
 # get_session_with_dish
