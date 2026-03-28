@@ -121,6 +121,11 @@ def test_duplicate_svix_id_skipped(client, engine):
         users = db.exec(select(User).where(User.clerk_user_id == "user_idem_test")).all()
         assert len(users) == 1
 
+        from backend.models.webhook_event import WebhookEvent
+
+        events = db.exec(select(WebhookEvent).where(WebhookEvent.id == "msg_idem_001")).all()
+        assert len(events) == 1
+
 
 # ---------------------------------------------------------------------------
 # Race condition / IntegrityError handling

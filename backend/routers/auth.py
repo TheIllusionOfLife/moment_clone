@@ -1,7 +1,6 @@
 import json
 import logging
 
-from cachetools import TTLCache
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
@@ -15,14 +14,11 @@ from backend.core.settings import settings
 from backend.models.chat import ChatRoom
 from backend.models.learner_state import LearnerState
 from backend.models.user import User
+from backend.models.webhook_event import WebhookEvent
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Bounded idempotency cache: max 10,000 IDs, 24-hour TTL.
-# For multi-instance deployments, replace with Redis SET with TTL.
-_processed_webhook_ids: TTLCache = TTLCache(maxsize=10_000, ttl=86400)
 
 
 @router.post("/api/webhooks/clerk/", status_code=200)
@@ -53,8 +49,13 @@ async def clerk_webhook(
             detail="Invalid webhook signature",
         ) from err
 
-    # Idempotency: skip already-processed events (after signature is verified)
-    if svix_id in _processed_webhook_ids:
+    # Idempotency: lock the event ID in the DB.
+    # If the ID already exists, this is a duplicate delivery -> skip.
+    try:
+        db.add(WebhookEvent(id=svix_id))
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
         return {"status": "already_processed"}
 
     try:
@@ -90,7 +91,7 @@ async def clerk_webhook(
                 clerk_user_id,
                 email,
             )
-            _processed_webhook_ids[svix_id] = True
+            await db.commit()
             return {"status": "ok"}
 
         existing = (
@@ -99,24 +100,24 @@ async def clerk_webhook(
             .first()
         )
         if existing is None:
+            # Use a savepoint so if user creation fails (e.g. race condition),
+            # we don't lose the WebhookEvent insert which happened earlier.
             try:
-                user = User(
-                    clerk_user_id=clerk_user_id,
-                    email=email,
-                    first_name=first_name,
-                )
-                db.add(user)
-                await db.flush()  # populate user.id before FK references
+                async with db.begin_nested():
+                    user = User(
+                        clerk_user_id=clerk_user_id,
+                        email=email,
+                        first_name=first_name,
+                    )
+                    db.add(user)
+                    await db.flush()  # populate user.id before FK references
 
-                db.add(LearnerState(user_id=user.id))
-                db.add(ChatRoom(user_id=user.id, room_type="coaching"))
-                db.add(ChatRoom(user_id=user.id, room_type="cooking_videos"))
-                await db.commit()
+                    db.add(LearnerState(user_id=user.id))
+                    db.add(ChatRoom(user_id=user.id, room_type="coaching"))
+                    db.add(ChatRoom(user_id=user.id, room_type="cooking_videos"))
             except IntegrityError:
-                await db.rollback()
-                # Confirm the collision is the expected clerk_user_id duplicate
-                # (not an unrelated constraint failure such as a missing FK).
-                # If the user doesn't exist, re-raise so Clerk retries the webhook.
+                # The savepoint rolled back, but the WebhookEvent insert is still valid in the session.
+                # Confirm the collision is the expected clerk_user_id duplicate.
                 recovered = (
                     (await db.execute(select(User).where(User.clerk_user_id == clerk_user_id)))
                     .scalars()
@@ -129,7 +130,7 @@ async def clerk_webhook(
                     clerk_user_id,
                 )
 
-    _processed_webhook_ids[svix_id] = True
+    await db.commit()
     return {"status": "ok"}
 
 
