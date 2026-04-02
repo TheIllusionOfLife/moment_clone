@@ -61,7 +61,8 @@ def test_upload_video_invalid_mime_rejected(client, cooking_session):
 
 
 def test_upload_video_valid_mime_accepted(client, cooking_session):
-    small_mp4 = b"\x00" * 100
+    # Minimal MP4 header with 'ftyp' at offset 4
+    small_mp4 = b"\x00\x00\x00\x14ftypisom" + b"\x00" * 100
     with (
         patch("backend.routers.sessions.upload_file", new_callable=AsyncMock) as mock_upload,
         patch("backend.routers.sessions.send_video_uploaded", new_callable=AsyncMock),
